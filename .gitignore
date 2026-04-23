@@ -1,6 +1,3 @@
-# Private agent brief — must stay local
-CLAUDE.md
-
 # PlatformIO build artefacts
 .pio/
 firmware/.pio/
@@ -19,10 +16,6 @@ Github/
 # Third-party sources used only for cross-checking behaviour
 _incoming/
 
-# Agent / editor tooling (local scratch)
-.claude/
-opencode.json
-
 # Python caches
 __pycache__/
 *.pyc
@@ -32,8 +25,7 @@ __pycache__/
 # macOS
 .DS_Store
 
-# Archives / scratch
-Archiwum.zip
+# Scratch
 *.bak
 *.bak-*
 
