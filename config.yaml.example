@@ -1,0 +1,105 @@
+# Repeater Configuration — Heltec V3 modem (USB-CDC or Wi-Fi/TCP)
+#
+# Select radio driver:
+#   "sx1262"      — SPI HAT / SX1262 module directly on the Pi
+#   "usb_heltec"  — Heltec V3 over USB-CDC (cable, default port 921600)
+#   "tcp_heltec"  — Heltec V3 over Wi-Fi/TCP (firmware v0.4+, no cable)
+radio_type: usb_heltec
+
+repeater:
+  node_name: "pyMC_USB_RPT"
+  latitude: 0.0
+  longitude: 0.0
+  identity_file: null
+  cache_ttl: 60
+  use_score_for_tx: false
+  score_threshold: 0.3
+  send_advert_interval_hours: 10
+  allow_discovery: true
+
+mesh:
+  global_flood_allow: true
+
+# Radio parameters — EU/UK (Narrow), Switzerland preset
+radio:
+  frequency: 869618000
+  tx_power: 22
+  bandwidth: 62500
+  spreading_factor: 8
+  coding_rate: 8
+  preamble_length: 16
+  sync_word: 18
+  crc_enabled: true
+  implicit_header: false
+
+# USB Heltec modem configuration (used when radio_type: usb_heltec)
+usb_heltec:
+  port: /dev/ttyUSB0
+  baudrate: 921600
+  lbt_enabled: true
+  lbt_max_attempts: 5
+
+# Wi-Fi/TCP Heltec modem configuration (used when radio_type: tcp_heltec)
+# The Heltec runs firmware v0.4+ in STA mode (configure once via its AP
+# setup portal at http://192.168.4.1). Set host to the IP assigned by your
+# router (or reserve a static lease). Leave token empty for open access
+# on the LAN, or set a matching string configured in the firmware's portal.
+tcp_heltec:
+  host: 192.168.5.3
+  port: 5055
+  token: ""
+  connect_timeout: 5.0
+  lbt_enabled: true
+  lbt_max_attempts: 5
+
+# SX1262 Hardware Configuration — not used with usb_heltec, kept for reference
+# Uncomment and set radio_type: sx1262 to switch back to SPI HAT
+# sx1262:
+#   bus_id: 0
+#   cs_id: 0
+#   cs_pin: 21
+#   reset_pin: 18
+#   busy_pin: 20
+#   irq_pin: 16
+#   txen_pin: 13
+#   rxen_pin: 12
+#   txled_pin: -1
+#   rxled_pin: -1
+#   use_dio3_tcxo: true
+#   is_waveshare: false
+
+delays:
+  tx_delay_factor: 1.0
+  direct_tx_delay_factor: 0.5
+
+duty_cycle:
+  enforcement_enabled: false
+  max_airtime_per_minute: 3600
+
+storage:
+  storage_dir: "/var/lib/pymc_repeater"
+  mqtt:
+    enabled: false
+    broker: "localhost"
+    port: 1883
+    username: null
+    password: null
+    base_topic: "meshcore/repeater"
+  retention:
+    sqlite_cleanup_days: 31
+
+letsmesh:
+  enabled: false
+  iata_code: "Test"
+  broker_index: 0
+  status_interval: 300
+  owner: ""
+  email: ""
+  disallowed_packet_types: []
+
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+web:
+  cors_enabled: false

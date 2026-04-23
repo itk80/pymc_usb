@@ -122,6 +122,38 @@ You should see `PONG`, `CONFIG_RESP`, `STATUS_RESP`, `CAD_RESP`, `TX_DONE`.
 
 ## 5. Integration with pymc_core
 
+### Option A — automatic (recommended): `scripts/install.sh`
+
+One script does everything that sections 5a and 5b describe manually:
+
+```bash
+sudo scripts/install.sh
+```
+
+It will:
+1. Locate the installed `pymc_core` via `python3 -c "import pymc_core"`.
+2. Copy `pymc_driver/usb_radio.py` and `pymc_driver/tcp_radio.py` into
+   `pymc_core/hardware/`.
+3. Verify both modules import cleanly.
+4. Locate `pymc_repeater/config.py` (tries the installed package first,
+   then `/opt/pymc_repeater`, then `/opt/companion/pyMC_Repeater`).
+5. Patch `create_radio()` / `get_radio_for_board()` with the `usb_heltec`
+   and `tcp_heltec` branches — **only if missing** (guard-string checked,
+   so re-running is safe).
+6. Back up the original `config.py` with a timestamped `.bak.` suffix
+   before any edit.
+7. Print the next steps (flash firmware, configure `/etc/pymc_repeater/config.yaml`,
+   restart the service).
+
+Re-run the script after every `pip install --upgrade pymc_core` or
+`apt upgrade pymc_repeater` — it will re-copy the drivers and re-patch
+`config.py` if the upgrade overwrote them.
+
+### Option B — manual
+
+If you prefer to apply changes by hand (or to adapt them to a non-standard
+install layout), use sections 5a / 5b below.
+
 ### 5a. USB mode (`radio_type: usb_heltec`)
 
 Copy the driver:

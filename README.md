@@ -56,6 +56,10 @@ pymc_usb/
 │   ├── common.py                  # → pymc_core examples/common.py
 │   └── hardware__init__.py        # → pymc_core/hardware/__init__.py
 │
+├── scripts/
+│   └── install.sh                 # one-shot: copy drivers + patch pymc_repeater
+│
+├── config.yaml.example            # example /etc/pymc_repeater/config.yaml
 ├── README.md
 └── INSTALL.md
 ```
@@ -95,10 +99,23 @@ You should see `PONG`, `CONFIG_RESP`, `STATUS_RESP`, `CAD_RESP`, `TX_DONE`.
 
 ### 3. Integrate with pymc_core
 
-Copy the driver:
+Automatic — one command:
+
+```bash
+sudo scripts/install.sh
+```
+
+Copies both drivers into the installed `pymc_core/hardware/`, patches
+`pymc_repeater/config.py` with the `usb_heltec` and `tcp_heltec` branches,
+backs up any file before editing, verifies imports. Idempotent — re-run
+after every `pymc_core` / `pymc_repeater` upgrade.
+
+Manual alternative (if you prefer a hand edit — see `INSTALL.md` for full
+instructions):
 
 ```bash
 cp pymc_driver/usb_radio.py /path/to/pymc_core/hardware/usb_radio.py
+cp pymc_driver/tcp_radio.py /path/to/pymc_core/hardware/tcp_radio.py
 ```
 
 Add the conditional import to `pymc_core/hardware/__init__.py`:
