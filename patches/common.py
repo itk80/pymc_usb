@@ -34,8 +34,8 @@ def create_radio(radio_type: str = "waveshare", serial_port: str = "/dev/ttyUSB0
             "uconsole"      - uConsole LoRa module (SPI)
             "meshadv-mini"  - MeshAdv Mini (SPI)
             "kiss-tnc"      - KISS TNC over serial
-            "usb-heltec"    - Heltec V3/V4 over USB-CDC (LoRa modem firmware)
-        serial_port: Serial port path (used by "kiss-tnc" and "usb-heltec")
+            "usb_heltec"    - Heltec V3/V4 over USB-CDC (LoRa modem firmware)
+        serial_port: Serial port path (used by "kiss-tnc" and "usb_heltec")
 
     Returns:
         Radio instance configured for the specified hardware
@@ -71,7 +71,7 @@ def create_radio(radio_type: str = "waveshare", serial_port: str = "/dev/ttyUSB0
             return kiss_wrapper
 
         # ── USB Heltec (LoRa modem over USB-CDC) ─────────────
-        if radio_type == "usb-heltec":
+        if radio_type == "usb_heltec":
             from pymc_core.hardware.usb_radio import USBLoRaRadio
 
             logger.debug("Using USB LoRa Radio (Heltec modem)")
@@ -160,7 +160,7 @@ def create_radio(radio_type: str = "waveshare", serial_port: str = "/dev/ttyUSB0
         if radio_type not in configs:
             raise ValueError(
                 f"Unknown radio type: {radio_type}. "
-                f"Use 'waveshare', 'meshadv-mini', 'uconsole', 'kiss-tnc', or 'usb-heltec'"
+                f"Use 'waveshare', 'meshadv-mini', 'uconsole', 'kiss-tnc', or 'usb_heltec'"
             )
 
         radio_kwargs = configs[radio_type]
@@ -189,7 +189,7 @@ def create_mesh_node(
     Args:
         node_name: Name for the mesh node
         radio_type: Type of radio hardware ("waveshare", "uconsole", "meshadv-mini",
-                    "kiss-tnc", or "usb-heltec")
+                    "kiss-tnc", or "usb_heltec")
         serial_port: Serial port for KISS TNC or USB Heltec
                      (e.g. "/dev/ttyUSB0" for KISS, "/dev/ttyACM0" for Heltec)
 
