@@ -35,6 +35,7 @@ def create_radio(radio_type: str = "waveshare", serial_port: str = "/dev/ttyUSB0
             "meshadv-mini"  - MeshAdv Mini (SPI)
             "kiss-tnc"      - KISS TNC over serial
             "usb_heltec"    - Heltec V3/V4 over USB-CDC (LoRa modem firmware)
+            "tcp_heltec"    - Heltec V3/V4 over WiFi/TCP (LoRa modem firmware)
         serial_port: Serial port path (used by "kiss-tnc" and "usb_heltec")
 
     Returns:
@@ -69,6 +70,36 @@ def create_radio(radio_type: str = "waveshare", serial_port: str = "/dev/ttyUSB0
                 f"Frequency: {kiss_config['frequency']/1000000:.3f}MHz, TX Power: {kiss_config['power']}dBm"
             )
             return kiss_wrapper
+
+        # ── TCP Heltec (LoRa modem over WiFi/TCP) ────────────
+        if radio_type == "tcp_heltec":
+            from pymc_core.hardware.tcp_radio import TCPLoRaRadio
+
+            logger.debug("Using TCP LoRa Radio (Heltec modem over WiFi)")
+
+            tcp_config = {
+                "host": os.environ.get("HELTEC_HOST", "heltec-3e2834.local"),
+                "port": int(os.environ.get("HELTEC_PORT", 5055)),
+                "token": os.environ.get("HELTEC_TOKEN", ""),
+                "connect_timeout": float(os.environ.get("HELTEC_TIMEOUT", 5.0)),
+                "frequency": int(os.environ.get("LORA_FREQ", 869618000)),
+                "bandwidth": int(os.environ.get("LORA_BW", 62500)),
+                "spreading_factor": int(os.environ.get("LORA_SF", 8)),
+                "coding_rate": int(os.environ.get("LORA_CR", 8)),
+                "tx_power": int(os.environ.get("LORA_POWER", 22)),
+                "sync_word": int(os.environ.get("LORA_SYNCWORD", "0x12"), 0),
+                "preamble_length": int(os.environ.get("LORA_PREAMBLE", 16)),
+                "lbt_enabled": True,
+                "lbt_max_attempts": 5,
+            }
+
+            radio = TCPLoRaRadio(**tcp_config)
+            logger.info(
+                f"TCP Heltec radio created at {tcp_config['host']}:{tcp_config['port']}: "
+                f"{tcp_config['frequency']/1e6:.1f}MHz SF{tcp_config['spreading_factor']} "
+                f"BW{tcp_config['bandwidth']/1000:.0f}kHz {tcp_config['tx_power']}dBm"
+            )
+            return radio
 
         # ── USB Heltec (LoRa modem over USB-CDC) ─────────────
         if radio_type == "usb_heltec":
@@ -160,7 +191,7 @@ def create_radio(radio_type: str = "waveshare", serial_port: str = "/dev/ttyUSB0
         if radio_type not in configs:
             raise ValueError(
                 f"Unknown radio type: {radio_type}. "
-                f"Use 'waveshare', 'meshadv-mini', 'uconsole', 'kiss-tnc', or 'usb_heltec'"
+                f"Use 'waveshare', 'meshadv-mini', 'uconsole', 'kiss-tnc', 'usb_heltec', or 'tcp_heltec'"
             )
 
         radio_kwargs = configs[radio_type]

@@ -167,8 +167,50 @@ if radio_type == "usb_heltec":
 
 ### 5b. WiFi/TCP mode (`radio_type: tcp_heltec`) — no cable
 
-Upstream `pymc_core` ships `TCPLoRaRadio` in `pymc_core/hardware/tcp_radio.py`
-— nothing to copy if your `pymc_core` is up-to-date.
+`TCPLoRaRadio` is **not** part of upstream `pymc_core`. Copy it the same way
+you did `usb_radio.py`:
+
+```bash
+cp pymc_driver/tcp_radio.py /usr/local/lib/python3.13/dist-packages/pymc_core/hardware/tcp_radio.py
+```
+
+Then add a conditional import alongside the USB one in
+`pymc_core/hardware/__init__.py`:
+
+```python
+try:
+    from .tcp_radio import TCPLoRaRadio
+    _TCP_AVAILABLE = True
+except ImportError:
+    _TCP_AVAILABLE = False
+    TCPLoRaRadio = None
+
+if _TCP_AVAILABLE:
+    __all__.append("TCPLoRaRadio")
+```
+
+And a matching branch in `pymc_core/examples/common.py::create_radio()`:
+
+```python
+if radio_type == "tcp_heltec":
+    from pymc_core.hardware.tcp_radio import TCPLoRaRadio
+    tcp = config["tcp_heltec"]
+    return TCPLoRaRadio(
+        host=tcp["host"],
+        port=int(tcp.get("port", 5055)),
+        token=str(tcp.get("token", "") or ""),
+        connect_timeout=float(tcp.get("connect_timeout", 5.0)),
+        frequency=int(config["radio"]["frequency"]),
+        bandwidth=int(config["radio"]["bandwidth"]),
+        spreading_factor=int(config["radio"]["spreading_factor"]),
+        coding_rate=int(config["radio"]["coding_rate"]),
+        tx_power=int(config["radio"]["tx_power"]),
+        sync_word=int(config["radio"].get("sync_word", 0x12)),
+        preamble_length=int(config["radio"].get("preamble_length", 16)),
+        lbt_enabled=tcp.get("lbt_enabled", True),
+        lbt_max_attempts=int(tcp.get("lbt_max_attempts", 5)),
+    )
+```
 
 Example `/etc/pymc_repeater/config.yaml`:
 
@@ -240,13 +282,15 @@ Retransmitted packet (X bytes, Yms airtime)   ← mesh forwarding is live
 
 ## File placement summary
 
-| Source file              | Destination                                  |
-|--------------------------|----------------------------------------------|
-| `firmware/*.bin`         | flashed onto the Heltec (esptool or OTA)    |
-| `pymc_driver/usb_radio.py` | → `pymc_core/hardware/usb_radio.py`        |
-| `patches/hardware__init__.py` | template for `pymc_core/hardware/__init__.py` |
-| `patches/common.py`      | template for `pymc_core/examples/common.py` |
+| Source file                    | Destination                                      |
+|--------------------------------|--------------------------------------------------|
+| `firmware/*.bin`               | flashed onto the Heltec (esptool or OTA)         |
+| `pymc_driver/usb_radio.py`     | → `pymc_core/hardware/usb_radio.py`              |
+| `pymc_driver/tcp_radio.py`     | → `pymc_core/hardware/tcp_radio.py`              |
+| `patches/hardware__init__.py`  | template for `pymc_core/hardware/__init__.py`    |
+| `patches/common.py`            | template for `pymc_core/examples/common.py`      |
 
-No other pymc_core files need modification beyond `__init__.py` and
-`common.py` (the `usb_heltec` branch in `create_radio()`). The
-`usb_radio.py` driver is self-contained — only `pyserial` is required.
+Both driver files are self-contained — `usb_radio.py` needs `pyserial`, and
+`tcp_radio.py` uses the Python standard library (`socket`, `threading`,
+`asyncio`) with no extra dependencies. Neither ships with upstream
+`pymc_core`; they live here and get copied into your installed `pymc_core`.

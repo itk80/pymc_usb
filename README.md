@@ -46,9 +46,10 @@ pymc_usb/
 │   │   └── ota_manager.h
 │   └── src/                       # All .cpp counterparts + main.cpp
 │
-├── pymc_driver/                   # Python driver for pymc_core
+├── pymc_driver/                   # Python drivers for pymc_core
 │   ├── __init__.py
-│   ├── usb_radio.py               # USBLoRaRadio — drop-in LoRaRadio impl
+│   ├── usb_radio.py               # USBLoRaRadio — LoRaRadio over USB-CDC
+│   ├── tcp_radio.py               # TCPLoRaRadio — LoRaRadio over WiFi/TCP
 │   └── test_modem.py              # Standalone test (pyserial only)
 │
 ├── patches/                       # Files to copy into pymc_core install
