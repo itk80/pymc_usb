@@ -45,7 +45,7 @@ usb_heltec:
 # router (or reserve a static lease). Leave token empty for open access
 # on the LAN, or set a matching string configured in the firmware's portal.
 tcp_heltec:
-  host: 192.168.5.3
+  host: 192.168.1.50
   port: 5055
   token: ""
   connect_timeout: 5.0

@@ -78,7 +78,7 @@ def create_radio(radio_type: str = "waveshare", serial_port: str = "/dev/ttyUSB0
             logger.debug("Using TCP LoRa Radio (Heltec modem over WiFi)")
 
             tcp_config = {
-                "host": os.environ.get("HELTEC_HOST", "heltec-3e2834.local"),
+                "host": os.environ.get("HELTEC_HOST", "heltec-abcdef.local"),
                 "port": int(os.environ.get("HELTEC_PORT", 5055)),
                 "token": os.environ.get("HELTEC_TOKEN", ""),
                 "connect_timeout": float(os.environ.get("HELTEC_TIMEOUT", 5.0)),

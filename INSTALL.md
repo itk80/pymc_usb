@@ -44,10 +44,10 @@ Once the Heltec is provisioned and visible via mDNS (`heltec-<mac3>.local`):
 
 ```bash
 # From firmware/
-pio run -e heltec_v3 -t upload --upload-port heltec-3e2834.local
+pio run -e heltec_v3 -t upload --upload-port heltec-abcdef.local
 
 # Or plain HTTP without PlatformIO:
-curl -F firmware=@firmware/firmware.bin http://heltec-3e2834.local/update
+curl -F firmware=@firmware/firmware.bin http://heltec-abcdef.local/update
 ```
 
 The Heltec reboots automatically after upload. The old firmware is **not**
@@ -107,8 +107,8 @@ async def check():
     r.begin()
     status = await r.get_wifi_status()
     print(status)
-    # {'mode_name': 'sta', 'ip': '192.168.5.3',
-    #  'mdns': 'heltec-3e2834.local', ...}
+    # {'mode_name': 'sta', 'ip': '192.168.1.50',
+    #  'mdns': 'heltec-abcdef.local', ...}
 ```
 
 ## 4. Standalone connection test (no pymc_core)
@@ -262,7 +262,7 @@ radio:
     min_threshold: 11
 
 tcp_heltec:
-  host: 192.168.5.3          # Heltec LAN IP
+  host: 192.168.1.50          # Heltec LAN IP
   port: 5055
   token: ""                  # empty = open LAN
   connect_timeout: 5.0
@@ -287,8 +287,8 @@ sudo journalctl -u pymc-repeater -f
 Expected log lines:
 
 ```
-TCPLoRaRadio configured: 192.168.5.3:5055 (auth=open), freq=869.6MHz, ...
-TCP connected to 192.168.5.3:5055
+TCPLoRaRadio configured: 192.168.1.50:5055 (auth=open), freq=869.6MHz, ...
+TCP connected to 192.168.1.50:5055
 Modem PONG received — alive
 Radio configured: 869.6MHz SF8 BW62kHz 22dBm sync=0x0012 pre=16
 CAD thresholds pushed peak=23 min=11: OK

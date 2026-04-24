@@ -11,7 +11,7 @@ Usage:
     from pymc_core.hardware.tcp_radio import TCPLoRaRadio
 
     radio = TCPLoRaRadio(
-        host="192.168.5.3",
+        host="192.168.1.50",
         port=5055,
         token="",                # empty = no auth (matches firmware NVS)
         frequency=869618000,
