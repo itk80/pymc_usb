@@ -631,9 +631,23 @@ fi
 # in-place sed-like edits the timestamps can race and leave stale bytecode.
 PKG_ROOT="$(dirname "$PYMC_HW")"          # …/site-packages/pymc_core
 SITE_ROOT="$(dirname "$PKG_ROOT")"        # …/site-packages
-find "$SITE_ROOT/pymc_core" "$SITE_ROOT/repeater" -name __pycache__ -type d \
-    -exec rm -rf {} + 2>/dev/null
-echo -e "  ${GREEN}Cleared __pycache__ in pymc_core/ and repeater/${NC}"
+
+# Build a list of dirs that actually exist before passing them to find —
+# `find /missing/dir` returns exit 1 even with stderr suppressed and
+# would trip `set -e`. Editable installs (pip install -e ...) keep the
+# package at its source checkout, so we also probe `repeater.__path__`.
+PURGE_PATHS=()
+[ -d "$SITE_ROOT/pymc_core" ] && PURGE_PATHS+=("$SITE_ROOT/pymc_core")
+[ -d "$SITE_ROOT/repeater" ] && PURGE_PATHS+=("$SITE_ROOT/repeater")
+REPEATER_SRC=$("$PYMC_PYTHON" -c "import repeater; print(repeater.__path__[0])" 2>/dev/null) || true
+[ -n "$REPEATER_SRC" ] && [ -d "$REPEATER_SRC" ] && PURGE_PATHS+=("$REPEATER_SRC")
+
+if [ ${#PURGE_PATHS[@]} -gt 0 ]; then
+    find "${PURGE_PATHS[@]}" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+    echo -e "  ${GREEN}Cleared __pycache__ in: ${PURGE_PATHS[*]}${NC}"
+else
+    echo -e "  ${YELLOW}No __pycache__ targets found — skipped${NC}"
+fi
 
 # ─── 6. Check USB device ─────────────────────────────────────
 echo ""

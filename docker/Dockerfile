@@ -29,6 +29,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git usbutils curl ca-certificates \
+        build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Dialout group keeps USB-CDC mode usable when the host passes --device.
@@ -37,13 +38,18 @@ RUN useradd -r -m -s /bin/bash -G dialout repeater
 # --- pyMC_Repeater (editable so install.sh can patch in place) ---
 RUN git clone --depth 1 https://github.com/rightup/pyMC_Repeater.git /opt/pymc_repeater
 
-# --- Python deps ---
+# --- Python deps. pymc_repeater pulls pymc_core[hardware] which compiles
+#     spidev from source — needs build-essential above and the cpython
+#     headers shipped under /usr/local/include/python3.12 in this image.
+#     Do NOT swallow errors here: a silent failure leaves the image with
+#     no `repeater` module and the container crashloops at startup.
 RUN pip install --no-cache-dir \
         pymc_core \
         pyserial \
         cherrypy \
         pyyaml \
-    && pip install --no-cache-dir -e /opt/pymc_repeater 2>/dev/null || true
+    && pip install --no-cache-dir -e /opt/pymc_repeater \
+    && python3 -c "import repeater; print('repeater OK at', repeater.__file__)"
 
 # --- Bring the whole repo in so install.sh can find pymc_driver/, patches/,
 #     scripts/ and config.yaml.example using its normal relative paths.
