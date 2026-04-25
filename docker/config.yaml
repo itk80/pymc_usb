@@ -23,6 +23,16 @@ repeater:
   allow_discovery: true
   security:
     admin_password: admin123      # change immediately on first login
+  # Adaptive advert-rate thresholds (pkts/min EWMA). pymc_console's
+  # Configuration page expects this section to exist; without it the
+  # page renders a blank "undefined is not an object (evaluating
+  # 'v.thresholds.quiet_max')" error. Defaults match upstream's POST
+  # update_advert_rate_limit_config handler.
+  advert_adaptive:
+    thresholds:
+      quiet_max: 0.05
+      normal_max: 0.20
+      busy_max: 0.50
 
 mesh:
   global_flood_allow: true

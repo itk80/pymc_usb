@@ -112,6 +112,18 @@ if os.environ.get("ADMIN_PASSWORD"):
     if cur_pw in PW_PLACEHOLDERS:
         sec["admin_password"] = os.environ["ADMIN_PASSWORD"]
 
+# Backfill defaults that pymc_console's Configuration page assumes are
+# present. Older configs (any deployment older than 2026-04-25) often
+# don't have repeater.advert_adaptive — without these keys the page
+# crashes with "undefined is not an object (evaluating
+# 'v.thresholds.quiet_max')". setdefault keeps user-customised values
+# intact; we only add the keys that are missing.
+ADAPTIVE_DEFAULTS = {"quiet_max": 0.05, "normal_max": 0.20, "busy_max": 0.50}
+adaptive = rpt.setdefault("advert_adaptive", {})
+thr = adaptive.setdefault("thresholds", {})
+for k, v in ADAPTIVE_DEFAULTS.items():
+    thr.setdefault(k, v)
+
 with open(path, "w") as f:
     yaml.safe_dump(cfg, f, sort_keys=False)
 

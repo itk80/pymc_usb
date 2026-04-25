@@ -16,6 +16,15 @@ repeater:
   score_threshold: 0.3
   send_advert_interval_hours: 10
   allow_discovery: true
+  # Adaptive advert-rate thresholds (pkts/min EWMA). pymc_console's
+  # Configuration page assumes this section exists; without it the page
+  # crashes with "undefined is not an object (evaluating
+  # 'v.thresholds.quiet_max')". Defaults match upstream's POST handler.
+  advert_adaptive:
+    thresholds:
+      quiet_max: 0.05
+      normal_max: 0.20
+      busy_max: 0.50
 
 mesh:
   global_flood_allow: true
