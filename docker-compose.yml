@@ -18,10 +18,14 @@
 
 services:
   repeater:
+    # Use the published Docker Hub image by default. `docker compose pull`
+    # fetches it; `docker compose up -d --build` ignores the registry and
+    # rebuilds locally from ./docker/Dockerfile (handy for dev on the Pi
+    # or for testing local patches before publishing).
     build:
       context: .
       dockerfile: docker/Dockerfile
-    image: pymc-usb-repeater:latest
+    image: itkeny/pymc-usb-repeater:latest
     container_name: pymc-repeater
     restart: unless-stopped
     ports:
