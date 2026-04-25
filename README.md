@@ -74,113 +74,11 @@ pymc_usb/
 └── INSTALL.md
 ```
 
-## Quick start
+## Installation
 
-### 1. Flash the firmware
-
-No PlatformIO needed — prebuilt binaries live in `firmware/`:
-
-```bash
-pip install esptool
-esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 921600 write_flash \
-    0x0     firmware/bootloader.bin \
-    0x8000  firmware/partitions.bin \
-    0x10000 firmware/firmware.bin
-```
-
-Or build from source:
-
-```bash
-cd firmware
-pio run -e heltec_v3 -t upload
-```
-
-See `INSTALL.md` for the full procedure, including OTA updates over WiFi and
-Wi-Fi provisioning from the host side.
-
-### 2. Standalone test
-
-```bash
-pip install pyserial
-python3 pymc_driver/test_modem.py /dev/ttyUSB0
-```
-
-You should see `PONG`, `CONFIG_RESP`, `STATUS_RESP`, `CAD_RESP`, `TX_DONE`.
-
-### 3. Integrate with pymc_core
-
-Automatic — one command:
-
-```bash
-sudo scripts/install.sh
-```
-
-Copies both drivers into the installed `pymc_core/hardware/`, patches
-`pymc_repeater/config.py` with the `usb_heltec` and `tcp_heltec` branches,
-backs up any file before editing, verifies imports. Idempotent — re-run
-after every `pymc_core` / `pymc_repeater` upgrade.
-
-Manual alternative (if you prefer a hand edit — see `INSTALL.md` for full
-instructions):
-
-```bash
-cp pymc_driver/usb_radio.py /path/to/pymc_core/hardware/usb_radio.py
-cp pymc_driver/tcp_radio.py /path/to/pymc_core/hardware/tcp_radio.py
-```
-
-Add the conditional import to `pymc_core/hardware/__init__.py`:
-
-```python
-try:
-    from .usb_radio import USBLoRaRadio
-    _USB_AVAILABLE = True
-except ImportError:
-    _USB_AVAILABLE = False
-    USBLoRaRadio = None
-
-if _USB_AVAILABLE:
-    __all__.append("USBLoRaRadio")
-```
-
-Usage in code (in place of `SX1262Radio`):
-
-```python
-from pymc_core.hardware.usb_radio import USBLoRaRadio
-
-radio = USBLoRaRadio(
-    port="/dev/ttyUSB0",            # or /dev/lora-modem (udev)
-    frequency=869618000,             # MeshCore EU Narrow / Switzerland
-    bandwidth=62500,
-    spreading_factor=8,
-    coding_rate=8,                   # 4/8
-    tx_power=22,
-    sync_word=0x12,                  # private LoRa sync word
-    preamble_length=16,
-)
-radio.begin()
-
-# From here the radio behaves exactly like SX1262Radio:
-# - Dispatcher calls radio.set_rx_callback() to get packets
-# - Packets are sent with `await radio.send(data)`
-# - LBT (CAD) is run automatically before TX
-```
-
-### 4. Docker (alternative — no native install needed)
-
-The image bundles pymc_repeater + pymc_core, runs `scripts/install.sh` at
-build time, and defaults to TCP mode so no USB passthrough is required.
-
-```bash
-# From repo root — set HELTEC_HOST in docker-compose.yml first
-docker compose up -d --build
-docker compose logs -f
-```
-
-Open the dashboard at `http://localhost:8000`. If you didn't set
-`HELTEC_HOST`, the repeater starts in deferred-connect mode — point the
-"Heltec config" panel in the web UI at the modem's real IP and the
-driver will connect on the fly. See `INSTALL.md` § 8 for env-var
-reference and USB-mode `--device` setup.
+Native install, Docker deployment, firmware flashing (esptool / PlatformIO /
+OTA), Wi-Fi provisioning and the full pymc_core integration steps are
+documented in [INSTALL.md](INSTALL.md).
 
 ## Wire protocol v0.5.9
 
@@ -234,19 +132,6 @@ CRC-16/CCITT (poly 0x1021, init 0xFFFF) over CMD+LEN+PAYLOAD.
 | 0x71 | VERSION_RESP      | ASCII version string                  |
 | 0xFE | ERROR             | error code (1 B)                      |
 | 0xFF | PONG              | —                                     |
-
-## udev rule (Linux)
-
-```bash
-# /etc/udev/rules.d/99-lora-modem.rules
-# CP2102 on Heltec V3
-SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", \
-    SYMLINK+="lora-modem", MODE="0666"
-```
-
-```bash
-sudo udevadm control --reload-rules && sudo udevadm trigger
-```
 
 ## Default radio parameters
 
