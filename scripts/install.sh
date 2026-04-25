@@ -435,9 +435,23 @@ REPLACE = (
     "                        config_yaml[\"radio\"][\"preamble_length\"] = hw_config.get(\"preamble_length\", 16)\n"
     "                elif config_yaml[\"radio_type\"] == \"tcp_heltec\":\n"
     "                    config_yaml.setdefault(\"tcp_heltec\", {})\n"
-    "                    config_yaml[\"tcp_heltec\"].setdefault(\"host\", \"heltec-abcdef.local\")\n"
-    "                    config_yaml[\"tcp_heltec\"].setdefault(\"port\", 5055)\n"
-    "                    config_yaml[\"tcp_heltec\"].setdefault(\"token\", \"\")\n"
+    "                    # Values from the injected /setup panel (heltec_setup_panel.js)\n"
+    "                    # take priority over the placeholder defaults below.\n"
+    "                    if data.get(\"tcp_heltec_host\"):\n"
+    "                        config_yaml[\"tcp_heltec\"][\"host\"] = str(data[\"tcp_heltec_host\"]).strip()\n"
+    "                    else:\n"
+    "                        config_yaml[\"tcp_heltec\"].setdefault(\"host\", \"heltec-abcdef.local\")\n"
+    "                    if data.get(\"tcp_heltec_port\"):\n"
+    "                        try:\n"
+    "                            config_yaml[\"tcp_heltec\"][\"port\"] = int(data[\"tcp_heltec_port\"])\n"
+    "                        except (TypeError, ValueError):\n"
+    "                            config_yaml[\"tcp_heltec\"].setdefault(\"port\", 5055)\n"
+    "                    else:\n"
+    "                        config_yaml[\"tcp_heltec\"].setdefault(\"port\", 5055)\n"
+    "                    if \"tcp_heltec_token\" in data:\n"
+    "                        config_yaml[\"tcp_heltec\"][\"token\"] = str(data.get(\"tcp_heltec_token\") or \"\")\n"
+    "                    else:\n"
+    "                        config_yaml[\"tcp_heltec\"].setdefault(\"token\", \"\")\n"
     "                    config_yaml[\"tcp_heltec\"].setdefault(\"connect_timeout\", 5.0)\n"
     "                    config_yaml[\"tcp_heltec\"].setdefault(\"lbt_enabled\", True)\n"
     "                    config_yaml[\"tcp_heltec\"].setdefault(\"lbt_max_attempts\", 5)\n"
@@ -538,33 +552,52 @@ fi
 if [ -n "$WIZARD" ]; then
     INDEX_HTML="$(dirname "$WIZARD")/html/index.html"
     if [ -f "$INDEX_HTML" ]; then
-        INDEX_HTML="$INDEX_HTML" "$PYMC_PYTHON" <<'INDEX_PATCH_EOF'
+        REPO_DIR="$REPO_DIR" INDEX_HTML="$INDEX_HTML" "$PYMC_PYTHON" <<'INDEX_PATCH_EOF'
 import os, datetime, shutil, sys
 
 target = os.environ["INDEX_HTML"]
+repo_dir = os.environ["REPO_DIR"]
 GUARD = "pymc_usb-heltec-link"
+SETUP_GUARD = "pymc_usb-tcp-setup-panel"
 
 with open(target) as f:
     content = f.read()
-if GUARD in content:
-    print("  index.html already carries the Heltec link — skipping")
-    sys.exit(0)
-
-LINK = (
-    '    <!-- ' + GUARD + ': stable across pymc_repeater upgrades, re-injected by install.sh -->\n'
-    '    <a id="' + GUARD + '" href="/api/heltec" target="_blank" rel="noopener"\n'
-    '       style="position:fixed;bottom:14px;right:14px;z-index:99999;'
-    'background:#2e7d57;color:#fff;padding:9px 14px;border-radius:6px;'
-    'font:13px/1.2 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;'
-    'text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.25);'
-    'border:1px solid rgba(255,255,255,.12)">\n'
-    '      Heltec config\n'
-    '    </a>\n'
-)
 
 ANCHOR = '<div id="app"></div>'
 if ANCHOR not in content:
-    print("  WARN: cannot find <div id=\"app\"> in index.html — skipping link injection")
+    print("  WARN: cannot find <div id=\"app\"> in index.html — skipping injection")
+    sys.exit(0)
+
+# Two separate injections, each guarded independently so re-runs are safe
+# even if a future upstream replaces only one of them.
+to_prepend = ""
+
+if GUARD not in content:
+    to_prepend += (
+        '    <!-- ' + GUARD + ': stable across pymc_repeater upgrades, re-injected by install.sh -->\n'
+        '    <a id="' + GUARD + '" href="/api/heltec" target="_blank" rel="noopener"\n'
+        '       style="position:fixed;bottom:14px;right:14px;z-index:99999;'
+        'background:#2e7d57;color:#fff;padding:9px 14px;border-radius:6px;'
+        'font:13px/1.2 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;'
+        'text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.25);'
+        'border:1px solid rgba(255,255,255,.12)">\n'
+        '      Heltec config\n'
+        '    </a>\n'
+    )
+
+setup_js_path = os.path.join(repo_dir, "patches", "heltec_setup_panel.js")
+if SETUP_GUARD not in content and os.path.exists(setup_js_path):
+    with open(setup_js_path) as jf:
+        js_body = jf.read()
+    to_prepend += (
+        '    <!-- ' + SETUP_GUARD + ': /setup wizard host/port/token panel, re-injected by install.sh -->\n'
+        '    <script id="' + SETUP_GUARD + '">\n'
+        + js_body +
+        '    </script>\n'
+    )
+
+if not to_prepend:
+    print("  index.html already carries Heltec link + setup panel — skipping")
     sys.exit(0)
 
 backup = f"{target}.bak.{datetime.datetime.now():%Y%m%d_%H%M%S}"
@@ -572,8 +605,8 @@ shutil.copy(target, backup)
 print(f"  Backed up: {backup}")
 
 with open(target, "w") as f:
-    f.write(content.replace(ANCHOR, LINK + "    " + ANCHOR, 1))
-print(f"  Injected Heltec config link into {target}")
+    f.write(content.replace(ANCHOR, to_prepend + "    " + ANCHOR, 1))
+print(f"  Injected into {target}: link={GUARD not in content}? setup-panel-script")
 INDEX_PATCH_EOF
     fi
 fi
