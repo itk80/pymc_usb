@@ -91,12 +91,26 @@ if os.environ.get("CODING_RATE"):      radio["coding_rate"]      = int(os.enviro
 if os.environ.get("SYNC_WORD"):        radio["sync_word"]        = int(os.environ["SYNC_WORD"], 0)
 if os.environ.get("PREAMBLE_LENGTH"):  radio["preamble_length"]  = int(os.environ["PREAMBLE_LENGTH"])
 
-# Repeater identity / admin password.
+# Repeater identity / admin password — SEED-ONLY semantics.
+# Once the user has chosen something other than the placeholder default
+# (typically through the /setup wizard) we leave their value alone, even
+# if NODE_NAME / ADMIN_PASSWORD are still set in the env. Otherwise the
+# wizard's effort would be reverted on every container restart and the
+# `needs_setup` indicator would never clear.
 rpt = cfg.setdefault("repeater", {})
+NAME_PLACEHOLDERS = {"", "mesh-repeater-01", "pyMC_USB_RPT", "USB_Repeater"}
+PW_PLACEHOLDERS = {"", "admin123"}
+
 if os.environ.get("NODE_NAME"):
-    rpt["node_name"] = os.environ["NODE_NAME"]
+    cur = rpt.get("node_name", "")
+    if cur in NAME_PLACEHOLDERS:
+        rpt["node_name"] = os.environ["NODE_NAME"]
+
 if os.environ.get("ADMIN_PASSWORD"):
-    rpt.setdefault("security", {})["admin_password"] = os.environ["ADMIN_PASSWORD"]
+    sec = rpt.setdefault("security", {})
+    cur_pw = sec.get("admin_password", "")
+    if cur_pw in PW_PLACEHOLDERS:
+        sec["admin_password"] = os.environ["ADMIN_PASSWORD"]
 
 with open(path, "w") as f:
     yaml.safe_dump(cfg, f, sort_keys=False)

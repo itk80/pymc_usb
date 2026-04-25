@@ -659,7 +659,72 @@ print(f"  Exempted Heltec panel endpoints from JWT in {target}")
 HTTP_PATCH_EOF
 fi
 
-# 5e. Purge .pyc cache so the freshly-patched .py files are picked up.
+# 5f. Make `restart_service()` work inside Docker. The setup wizard
+# relies on it after writing config.yaml, but the upstream implementation
+# only knows Buildroot init scripts and systemctl — neither exists inside
+# a container, so the daemon never reloads, the SPA refresh shows the
+# wizard again, and the user is stuck in a loop. We monkey-patch by
+# adding a Docker branch at the top of restart_service: if /.dockerenv
+# is present, send SIGTERM to PID 1 and let the container's restart
+# policy bring us back with the fresh on-disk config.
+SERVICE_UTILS=""
+if [ -n "$PYMC_PYTHON" ]; then
+    SERVICE_UTILS=$("$PYMC_PYTHON" -c "import repeater.service_utils as m; print(m.__file__)" 2>/dev/null) || true
+fi
+
+if [ -n "$SERVICE_UTILS" ] && [ -f "$SERVICE_UTILS" ]; then
+    SERVICE_UTILS="$SERVICE_UTILS" "$PYMC_PYTHON" <<'SVC_PATCH_EOF'
+import os, datetime, shutil, sys
+
+target = os.environ["SERVICE_UTILS"]
+GUARD = "# pymc_usb — Docker restart branch"
+
+with open(target) as f:
+    content = f.read()
+
+if GUARD in content:
+    print("  service_utils already patched — skipping")
+    sys.exit(0)
+
+# Anchor: the very first executable line inside restart_service(). We
+# splice in a /.dockerenv check before the existing Buildroot/systemd
+# logic so plain-host installs are unaffected.
+ANCHOR = '    if is_buildroot():\n'
+INJECT = (
+    '    ' + GUARD + ' — Python running as PID 1 in Docker has no\n'
+    '    # default signal handlers, so a plain os.kill(1, SIGTERM) gets\n'
+    '    # ignored. Instead we spawn a detached helper that waits long\n'
+    '    # enough for the HTTP response to flush, then os._exit()\'s the\n'
+    '    # daemon. The container restart policy brings it back up with\n'
+    '    # the freshly-written config.\n'
+    '    if os.path.exists("/.dockerenv"):\n'
+    '        import threading, time as _t\n'
+    '        def _docker_exit():\n'
+    '            _t.sleep(0.5)\n'
+    '            logger.info("Docker detected — exiting PID 1 to reload config")\n'
+    '            os._exit(0)\n'
+    '        threading.Thread(target=_docker_exit, daemon=True).start()\n'
+    '        return True, "Service restart initiated (Docker)"\n'
+    '\n'
+)
+
+if ANCHOR not in content:
+    print("  WARN: cannot find restart_service anchor — skip", file=sys.stderr)
+    sys.exit(0)
+
+backup = f"{target}.bak.{datetime.datetime.now():%Y%m%d_%H%M%S}"
+shutil.copy(target, backup)
+print(f"  Backed up: {backup}")
+
+with open(target, "w") as f:
+    f.write(content.replace(ANCHOR, INJECT + ANCHOR, 1))
+print(f"  Patched restart_service in {target}: Docker branch inserted")
+SVC_PATCH_EOF
+else
+    echo -e "  ${YELLOW}WARN: service_utils.py not located — wizard's restart will be a no-op in Docker${NC}"
+fi
+
+# 5g. Purge .pyc cache so the freshly-patched .py files are picked up.
 # Python won't recompile cached .pyc unless source mtime is newer; with
 # in-place sed-like edits the timestamps can race and leave stale bytecode.
 PKG_ROOT="$(dirname "$PYMC_HW")"          # …/site-packages/pymc_core
