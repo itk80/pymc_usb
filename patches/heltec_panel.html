@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Heltec TCP — pymc_usb</title>
+<style>
+  body{font-family:system-ui,sans-serif;max-width:520px;margin:1.5em auto;padding:0 1em;color:#222}
+  h1{font-size:1.4em;margin-bottom:.3em}
+  .sub{color:#666;font-size:.9em;margin-bottom:1.5em}
+  label{display:block;margin-top:1em;font-weight:600}
+  input{width:100%;padding:.6em;box-sizing:border-box;font-size:1em;font-family:inherit}
+  button{margin-top:1.5em;padding:.75em 1em;background:#3a7;color:#fff;border:0;font-size:1em;border-radius:4px;cursor:pointer}
+  button:hover{background:#2a6}
+  button:disabled{background:#aaa;cursor:wait}
+  .hint{color:#888;font-weight:400;font-size:.85em}
+  #msg{margin-top:1em;padding:.7em;border-radius:4px;display:none}
+  #msg.ok{background:#dfd;color:#262;display:block}
+  #msg.err{background:#fdd;color:#622;display:block}
+  .status{margin-top:1.5em;padding:.7em;background:#f4f4f4;border-radius:4px;font-family:ui-monospace,Menlo,monospace;font-size:.85em}
+</style>
+</head>
+<body>
+
+<h1>Heltec TCP modem</h1>
+<div class="sub">Set the IP/hostname, port and optional token used by the
+<code>tcp_heltec</code> radio. Changes apply live — no service restart required.</div>
+
+<form id="cfg-form">
+  <label>Host
+    <span class="hint">— mDNS hostname (<code>heltec-XXXXXX.local</code>) or LAN IP</span>
+    <input id="host" name="host" required autocomplete="off" placeholder="heltec-3e2834.local">
+  </label>
+
+  <label>Port
+    <input id="port" name="port" type="number" min="1" max="65535" value="5055">
+  </label>
+
+  <label>Auth token <span class="hint">— leave empty for open LAN</span>
+    <input id="token" name="token" type="password" autocomplete="new-password">
+  </label>
+
+  <button id="apply" type="submit">Apply</button>
+</form>
+
+<div id="msg"></div>
+
+<div class="status" id="status">Loading current config…</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/get_tcp_heltec_config', {credentials: 'include'});
+    if (r.status === 401) { window.location.reload(); return; }
+    const d = await r.json();
+    $('host').value  = d.host || '';
+    $('port').value  = d.port || 5055;
+    $('status').textContent =
+      'radio_type: ' + (d.radio_type || '?') +
+      '   |   host: ' + (d.host || '<unset>') +
+      '   |   token: ' + (d.has_token ? 'set' : 'empty');
+    if (d.has_token) {
+      $('token').placeholder = '(unchanged — leave empty to keep current)';
+    }
+  } catch (e) {
+    $('status').textContent = 'Failed to load: ' + e;
+  }
+}
+
+$('cfg-form').onsubmit = async (e) => {
+  e.preventDefault();
+  $('apply').disabled = true;
+  $('msg').className = '';
+  $('msg').textContent = '';
+
+  const body = { host: $('host').value.trim(), port: parseInt($('port').value, 10) };
+  // Only send token if user typed one — empty input keeps existing token.
+  if ($('token').value !== '') body.token = $('token').value;
+
+  try {
+    const r = await fetch('/api/update_tcp_heltec_config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      credentials: 'include',
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (d.success) {
+      $('msg').className = 'ok';
+      $('msg').textContent = 'Applied. ' + (d.message || '');
+      $('token').value = '';
+      loadConfig();
+    } else {
+      $('msg').className = 'err';
+      $('msg').textContent = 'Error: ' + (d.error || 'unknown');
+    }
+  } catch (e) {
+    $('msg').className = 'err';
+    $('msg').textContent = 'Request failed: ' + e;
+  } finally {
+    $('apply').disabled = false;
+  }
+};
+
+loadConfig();
+</script>
+</body>
+</html>

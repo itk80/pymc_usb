@@ -48,6 +48,7 @@ CMD_STATUS_REQ  = 0x20
 CMD_NOISE_REQ   = 0x22
 CMD_CAD_REQUEST = 0x30
 CMD_RX_START    = 0x31
+CMD_SET_CAD_PARAMS = 0x34   # v0.5.4
 CMD_SET_WIFI    = 0x41   # v0.5
 CMD_AUTH        = 0x50
 CMD_WIFI_RESET  = 0x60
@@ -63,6 +64,7 @@ CMD_CONFIG_RESP = 0x12
 CMD_STATUS_RESP = 0x21
 CMD_NOISE_RESP  = 0x23
 CMD_CAD_RESP    = 0x32
+CMD_CAD_PARAMS_RESP = 0x35  # v0.5.4
 CMD_RX_STARTED  = 0x33
 CMD_AUTH_OK     = 0x51
 CMD_WIFI_STATUS = 0x62   # v0.5
@@ -506,13 +508,35 @@ class USBLoRaRadio(_RadioBase):
     ) -> bool:
         """Public CAD interface matching SX1262Radio.perform_cad().
 
-        det_peak/det_min/calibration are accepted for API compatibility with
-        pymc_core's SX1262 wrapper (used by repeater CAD calibration UI).
-        The current firmware uses RadioLib scanChannel() defaults and does not
-        honour per-call CAD thresholds — extend protocol v0.5 with
-        CMD_SET_CAD_PARAMS to make these effective.
+        When det_peak/det_min are supplied (used by the repeater CAD
+        calibration tool to sweep different thresholds), program the chip
+        with those values via CMD_SET_CAD_PARAMS before running the scan.
         """
-        return await self._perform_cad(timeout)
+        if det_peak is not None and det_min is not None:
+            new_peak = int(det_peak)
+            new_min  = int(det_min)
+            # Same caching rationale as tcp_radio: avoid re-sending unchanged
+            # thresholds during the per-sample inner loop of calibration.
+            cached_peak = getattr(self, "_custom_cad_peak", None)
+            cached_min  = getattr(self, "_custom_cad_min", None)
+            if new_peak != cached_peak or new_min != cached_min:
+                payload = bytes([
+                    0x01,
+                    new_peak & 0xFF,
+                    new_min  & 0xFF,
+                    0x00,
+                ])
+                await self._send_command(
+                    CMD_SET_CAD_PARAMS, payload,
+                    expect_cmd=CMD_CAD_PARAMS_RESP, timeout=2.0,
+                )
+                self._custom_cad_peak = new_peak
+                self._custom_cad_min  = new_min
+
+        # Calibration tool sends timeout=0.3 which is tight for our stack;
+        # raise the floor so we don't lose samples to "no response".
+        effective = max(timeout, 0.6)
+        return await self._perform_cad(effective)
 
     # ── Wi-Fi / OTA provisioning (v0.5) ───────────────────────
 

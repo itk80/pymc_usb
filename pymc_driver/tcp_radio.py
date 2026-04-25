@@ -201,10 +201,19 @@ class TCPLoRaRadio(_RadioBase):
     # ══════════════════════════════════════════════════════════
 
     def begin(self) -> bool:
-        """Open TCP connection, authenticate (if token set), push config."""
+        """Open TCP connection, authenticate (if token set), push config.
+
+        If the initial connect/handshake fails, the radio is still marked
+        initialised and the RX worker is started in deferred-connect mode —
+        it will keep retrying the connection with exponential backoff until
+        the Heltec appears. This lets the repeater's HTTP server / setup
+        wizard come up even when the Heltec is offline or its host has not
+        been set yet (e.g. placeholder hostname after a fresh install).
+        """
         if self._initialized:
             return True
 
+        connected = False
         try:
             self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self._sock.settimeout(self.connect_timeout)
@@ -212,38 +221,47 @@ class TCPLoRaRadio(_RadioBase):
             # TCP_NODELAY mirrors the firmware side and avoids Nagle delay
             self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             logger.info(f"TCP connected to {self.host}:{self.port}")
+            connected = True
 
-            # Authenticate BEFORE anything else if token was configured.
-            if self.token:
-                if not self._auth_sync(timeout=3.0):
-                    logger.error("Modem rejected AUTH token")
-                    self._close_sock()
-                    return False
-
-            if not self._ping_sync(timeout=3.0):
-                logger.error("Modem not responding to PING")
+            if self.token and not self._auth_sync(timeout=3.0):
+                logger.error("Modem rejected AUTH token — entering deferred mode")
                 self._close_sock()
-                return False
-
-            if not self._apply_config_sync():
-                logger.error("Failed to configure radio")
+                connected = False
+            elif not self._ping_sync(timeout=3.0):
+                logger.error("Modem not responding to PING — entering deferred mode")
                 self._close_sock()
-                return False
-
-            self._stop_event.clear()
-            self._rx_thread = threading.Thread(
-                target=self._rx_worker, daemon=True, name="tcp-lora-rx"
-            )
-            self._rx_thread.start()
-
-            self._initialized = True
-            logger.info("TCPLoRaRadio initialized successfully")
-            return True
-
+                connected = False
+            elif not self._apply_config_sync():
+                logger.error("Failed to configure radio — entering deferred mode")
+                self._close_sock()
+                connected = False
         except Exception as e:
-            logger.error(f"Failed to initialize TCPLoRaRadio: {e}")
+            logger.warning(
+                f"Could not reach Heltec at {self.host}:{self.port} ({e}); "
+                f"starting in deferred-connect mode — RX worker will keep retrying"
+            )
             self._close_sock()
-            return False
+            connected = False
+
+        # Always start the RX worker. When connected it processes traffic
+        # immediately; otherwise _reconnect_with_backoff drives reconnection
+        # so the repeater UI can stay up while the user sets tcp_heltec.host
+        # via /api/setup_wizard or /api/update_radio_config.
+        self._stop_event.clear()
+        self._rx_thread = threading.Thread(
+            target=self._rx_worker, daemon=True, name="tcp-lora-rx"
+        )
+        self._rx_thread.start()
+
+        self._initialized = True
+        if connected:
+            logger.info("TCPLoRaRadio initialized successfully")
+        else:
+            logger.info(
+                "TCPLoRaRadio initialised in deferred-connect mode "
+                "(no Heltec yet — radio commands will return None until reachable)"
+            )
+        return True
 
     async def send(self, data: bytes) -> Optional[dict]:
         """Send a LoRa packet asynchronously with LBT (CAD)."""
@@ -441,8 +459,48 @@ class TCPLoRaRadio(_RadioBase):
             return self._noise_floor
         return None
 
-    async def perform_cad(self, timeout: float = 1.0) -> bool:
-        return await self._perform_cad(timeout)
+    async def perform_cad(
+        self,
+        det_peak: Optional[int] = None,
+        det_min: Optional[int] = None,
+        timeout: float = 1.0,
+        calibration: bool = False,
+    ) -> bool:
+        """Public CAD interface compatible with sx1262_wrapper.perform_cad().
+
+        When det_peak/det_min are supplied (e.g. by the repeater's CAD
+        calibration tool), program the chip with those thresholds via
+        CMD_SET_CAD_PARAMS before running the scan. Without this each
+        calibration sample would silently fall back to whatever thresholds
+        were last installed, defeating the sweep.
+        """
+        if det_peak is not None and det_min is not None:
+            new_peak = int(det_peak)
+            new_min  = int(det_min)
+            # Skip the firmware roundtrip when thresholds haven't changed
+            # since the previous call. Saves ~50-80 ms per CAD during the
+            # repeated-sample phase of the calibration sweep.
+            cached_peak = getattr(self, "_custom_cad_peak", None)
+            cached_min  = getattr(self, "_custom_cad_min", None)
+            if new_peak != cached_peak or new_min != cached_min:
+                payload = bytes([
+                    0x01,                       # symNum: CAD_ON_2_SYMB
+                    new_peak & 0xFF,
+                    new_min  & 0xFF,
+                    0x00,                       # exitMode: STDBY
+                ])
+                await self._send_command(
+                    CMD_SET_CAD_PARAMS, payload,
+                    expect_cmd=CMD_CAD_PARAMS_RESP, timeout=2.0,
+                )
+                self._custom_cad_peak = new_peak
+                self._custom_cad_min  = new_min
+
+        # Calibration engine passes 0.3s, which is tight for TCP transport
+        # with the firmware's CAD-prime delay; floor it so the sweep gets
+        # real samples instead of "no response → assumed clear".
+        effective = max(timeout, 0.6)
+        return await self._perform_cad(effective)
 
     def cleanup(self):
         self._initialized = False
@@ -666,7 +724,13 @@ class TCPLoRaRadio(_RadioBase):
         while not self._stop_event.is_set():
             try:
                 if self._sock is None:
-                    time.sleep(0.1)
+                    # Deferred-connect mode: begin() couldn't reach the
+                    # Heltec, so we drive the reconnect ourselves with the
+                    # same exponential backoff used after a runtime drop.
+                    # Returns False if stop_event fires while waiting.
+                    if not self._reconnect_with_backoff():
+                        return
+                    buf.clear()
                     continue
 
                 # Short recv timeout so stop_event is honoured promptly
@@ -940,6 +1004,45 @@ class TCPLoRaRadio(_RadioBase):
 
     # CAD thresholds — v0.5.4 firmware exposes them via CMD_SET_CAD_PARAMS.
     # symNum=0x01 (2 symbols) and exitMode=0x00 (STDBY) match pymc_core SX1262 defaults.
+    def set_tcp_target(self, host: Optional[str] = None,
+                       port: Optional[int] = None,
+                       token: Optional[str] = None) -> bool:
+        """Change the Heltec TCP endpoint at runtime.
+
+        Updates self.host/port/token in place, closes the current socket,
+        and lets _rx_worker re-establish the connection via the existing
+        backoff path. Returns True if any field actually changed.
+
+        Use case: a fresh repeater install starts in deferred-connect mode
+        with a placeholder host; the user supplies the real one later
+        through the dedicated panel at /heltec, and we apply it without a
+        service restart.
+        """
+        changed = []
+        if host is not None and host != self.host:
+            self.host = host
+            changed.append(f"host={host}")
+        if port is not None:
+            try:
+                p = int(port)
+            except (TypeError, ValueError):
+                p = self.port
+            if p != self.port and 1 <= p <= 65535:
+                self.port = p
+                changed.append(f"port={p}")
+        if token is not None and token != self.token:
+            self.token = token
+            changed.append("token=***")
+
+        if not changed:
+            return False
+
+        logger.info(f"TCP target changed: {', '.join(changed)} — forcing reconnect")
+        # Drop the socket; _rx_worker sees self._sock is None and runs
+        # _reconnect_with_backoff against the new host/port.
+        self._close_sock()
+        return True
+
     def set_custom_cad_thresholds(self, peak: int, min_val: int) -> bool:
         self._custom_cad_peak = int(peak)
         self._custom_cad_min  = int(min_val)

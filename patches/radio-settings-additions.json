@@ -1,0 +1,19 @@
+{
+  "_comment": "Hardware entries injected into pymc_repeater's radio-settings.json by scripts/install.sh. The repeater web UI reads /api/hardware_options which serialises this file; setup_wizard parses 'radio_type' from the chosen entry to decide which config section to populate.",
+  "hardware": {
+    "usb_heltec": {
+      "name": "Heltec V3 (USB-CDC modem)",
+      "description": "Heltec WiFi LoRa 32 V3 connected by USB cable. Requires the Heltec to run our LoRa modem firmware (firmware/firmware.bin in this repo).",
+      "radio_type": "usb_heltec",
+      "tx_power": 22,
+      "preamble_length": 16
+    },
+    "tcp_heltec": {
+      "name": "Heltec V3 (Wi-Fi/TCP modem)",
+      "description": "Heltec WiFi LoRa 32 V3 over LAN. Provision Wi-Fi via the on-device AP portal first, then edit tcp_heltec.host in /etc/pymc_repeater/config.yaml to match the Heltec's IP or mDNS name.",
+      "radio_type": "tcp_heltec",
+      "tx_power": 22,
+      "preamble_length": 16
+    }
+  }
+}
