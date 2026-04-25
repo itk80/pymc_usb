@@ -96,3 +96,7 @@ web:
   host: "0.0.0.0"
   port: 8000
   cors_enabled: false
+  # Serve the pyMC Console dashboard (https://github.com/dmduran12/pymc_console)
+  # which is baked into the image at build time. Comment out to fall back
+  # to pyMC_Repeater's own Vue bundle.
+  web_path: /opt/pymc_console/web/html

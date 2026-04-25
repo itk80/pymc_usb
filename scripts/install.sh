@@ -38,7 +38,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── 1. Find pymc_core location ──────────────────────────────
 echo ""
-echo -e "${YELLOW}[1/6] Finding pymc_core...${NC}"
+echo -e "${YELLOW}[1/7] Finding pymc_core...${NC}"
 
 # pymc_repeater is sometimes installed system-wide (apt / pip --user) and
 # sometimes in a self-contained venv (the canonical post-2026 layout uses
@@ -74,7 +74,7 @@ echo -e "  ${GREEN}Using interpreter: $PYMC_PYTHON${NC}"
 
 # ─── 2. Install USB radio driver ─────────────────────────────
 echo ""
-echo -e "${YELLOW}[2/6] Installing USBLoRaRadio + TCPLoRaRadio drivers...${NC}"
+echo -e "${YELLOW}[2/7] Installing USBLoRaRadio + TCPLoRaRadio drivers...${NC}"
 cp "$REPO_DIR/pymc_driver/usb_radio.py" "$PYMC_HW/usb_radio.py"
 chmod 644 "$PYMC_HW/usb_radio.py"
 echo -e "  ${GREEN}Installed: $PYMC_HW/usb_radio.py${NC}"
@@ -95,7 +95,7 @@ echo -e "  ${GREEN}Installed: $PYMC_HW/tcp_radio.py${NC}"
 
 # ─── 3. Patch pymc_repeater config.py ─────────────────────────
 echo ""
-echo -e "${YELLOW}[3/6] Patching pymc_repeater...${NC}"
+echo -e "${YELLOW}[3/7] Patching pymc_repeater...${NC}"
 
 # Find repeater location (try multiple paths)
 RPT_CONFIG=""
@@ -243,7 +243,7 @@ fi
 
 # ─── 4. Install example config ───────────────────────────────
 echo ""
-echo -e "${YELLOW}[4/6] Config file...${NC}"
+echo -e "${YELLOW}[4/7] Config file...${NC}"
 
 CONFIG_PATH="/etc/pymc_repeater/config.yaml"
 
@@ -330,7 +330,7 @@ fi
 
 # ─── 5. Patch web setup wizard (radio-settings.json + api_endpoints.py) ──
 echo ""
-echo -e "${YELLOW}[5/6] Wiring usb_heltec / tcp_heltec into the web setup wizard...${NC}"
+echo -e "${YELLOW}[5/7] Wiring usb_heltec / tcp_heltec into the web setup wizard...${NC}"
 
 # 5a. radio-settings.json — merge our two entries (idempotent)
 RADIO_SETTINGS=""
@@ -543,14 +543,92 @@ print(f"  Heltec panel endpoints inserted in {target}")
 PANEL_PATCH_EOF
 fi
 
-# 5d-pre. Inject a sticky "Heltec config" link into the SPA's index.html.
-# The Vue bundle is pre-compiled and we can't add UI fields to its
-# Settings page from outside, so the next-best UX is a small floating
-# button that opens our /api/heltec panel in a new tab. The button sits
-# in a fixed position outside the Vue mount root (#app), so the SPA
-# never touches it.
+# 5c2. Install pymc_console — a richer dashboard from
+# https://github.com/dmduran12/pymc_console-dist that overlays on top
+# of pyMC_Repeater's CherryPy server. Repeater reads `web.web_path`
+# from config.yaml and serves whichever directory is pointed there;
+# the default is repeater's own Vue bundle, but we point it at the
+# console bundle for a much nicer UI. The Heltec endpoints we expose
+# (/api/heltec etc.) keep working unchanged because they are CherryPy
+# routes, independent of which static bundle is being served.
+#
+# Skip this step entirely with PYMC_NO_CONSOLE=1 if you prefer the
+# upstream UI. Pin a specific release with PYMC_CONSOLE_VERSION=v0.9.327.
+if [ -z "$PYMC_NO_CONSOLE" ]; then
+    echo ""
+    echo -e "${YELLOW}[6/7] Installing pymc_console UI bundle...${NC}"
+
+    CONSOLE_DIR="/opt/pymc_console/web/html"
+    CONSOLE_VERSION="${PYMC_CONSOLE_VERSION:-latest}"
+    if [ "$CONSOLE_VERSION" = "latest" ]; then
+        TARBALL_URL="https://github.com/dmduran12/pymc_console-dist/releases/latest/download/pymc-ui-latest.tar.gz"
+    else
+        TARBALL_URL="https://github.com/dmduran12/pymc_console-dist/releases/download/${CONSOLE_VERSION}/pymc-ui-${CONSOLE_VERSION}.tar.gz"
+    fi
+
+    if [ -f "$CONSOLE_DIR/index.html" ] && [ -z "$PYMC_CONSOLE_FORCE" ]; then
+        echo -e "  ${GREEN}Already present at $CONSOLE_DIR — skipping download (set PYMC_CONSOLE_FORCE=1 to refresh)${NC}"
+    else
+        mkdir -p "$CONSOLE_DIR"
+        TMPTAR="/tmp/pymc-console-$$.tar.gz"
+        echo "  Downloading $TARBALL_URL"
+        if ! curl -fsSL -o "$TMPTAR" "$TARBALL_URL"; then
+            echo -e "  ${RED}Download failed — leaving upstream UI in place${NC}"
+            rm -f "$TMPTAR"
+        else
+            # Wipe stale assets first; tarball doesn't carry every file across versions.
+            rm -rf "$CONSOLE_DIR"/*
+            tar -xzf "$TMPTAR" -C "$CONSOLE_DIR/"
+            rm -f "$TMPTAR"
+            # Best-effort chown — `repeater` user may not exist on a non-systemd
+            # box; in that case pymc_repeater runs as the invoking user and the
+            # default ownership from extraction is fine.
+            chown -R repeater:repeater /opt/pymc_console 2>/dev/null || true
+            VER=$(cat "$CONSOLE_DIR/VERSION" 2>/dev/null | tr -d '[:space:]')
+            echo -e "  ${GREEN}Installed pymc_console ${VER:-(unknown)} at $CONSOLE_DIR${NC}"
+        fi
+    fi
+
+    # Point pymc_repeater at the console bundle. Only edit if web.web_path
+    # is unset or still points at upstream's repeater/web/html — never
+    # clobber a user-customised path.
+    if [ -f "$CONFIG_PATH" ] && [ -d "$CONSOLE_DIR" ]; then
+        CONFIG_PATH="$CONFIG_PATH" CONSOLE_DIR="$CONSOLE_DIR" "$PYMC_PYTHON" <<'WEBPATH_PATCH_EOF'
+import os, yaml
+p = os.environ["CONFIG_PATH"]
+target = os.environ["CONSOLE_DIR"]
+with open(p) as f:
+    cfg = yaml.safe_load(f) or {}
+web = cfg.setdefault("web", {})
+cur = (web.get("web_path") or "").rstrip("/")
+if cur and cur != target and "pymc_console" not in cur and "/opt/pymc_repeater" not in cur:
+    print(f"  web.web_path already custom ({cur}) — leaving as-is")
+elif cur == target:
+    print("  web.web_path already pointed at pymc_console")
+else:
+    web["web_path"] = target
+    with open(p, "w") as f:
+        yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
+    print(f"  Set web.web_path = {target} in {p}")
+WEBPATH_PATCH_EOF
+    fi
+fi
+
+# 5d-pre. Inject a sticky "Heltec config" link into the served SPA's
+# index.html. We patch whichever bundle is actually serving — defaults
+# to /opt/pymc_console/web/html (set above), falls back to repeater's
+# own Vue bundle if the console step was skipped or failed.
+INDEX_CANDIDATES=()
+if [ -f "$CONFIG_PATH" ]; then
+    WEB_PATH=$("$PYMC_PYTHON" -c "import yaml; print((yaml.safe_load(open('$CONFIG_PATH')) or {}).get('web',{}).get('web_path','') or '')" 2>/dev/null)
+    [ -n "$WEB_PATH" ] && [ -f "$WEB_PATH/index.html" ] && INDEX_CANDIDATES+=("$WEB_PATH/index.html")
+fi
 if [ -n "$WIZARD" ]; then
-    INDEX_HTML="$(dirname "$WIZARD")/html/index.html"
+    UPSTREAM_INDEX="$(dirname "$WIZARD")/html/index.html"
+    [ -f "$UPSTREAM_INDEX" ] && INDEX_CANDIDATES+=("$UPSTREAM_INDEX")
+fi
+
+for INDEX_HTML in "${INDEX_CANDIDATES[@]}"; do
     if [ -f "$INDEX_HTML" ]; then
         REPO_DIR="$REPO_DIR" INDEX_HTML="$INDEX_HTML" "$PYMC_PYTHON" <<'INDEX_PATCH_EOF'
 import os, datetime, shutil, sys
@@ -563,9 +641,15 @@ SETUP_GUARD = "pymc_usb-tcp-setup-panel"
 with open(target) as f:
     content = f.read()
 
-ANCHOR = '<div id="app"></div>'
-if ANCHOR not in content:
-    print("  WARN: cannot find <div id=\"app\"> in index.html — skipping injection")
+# Different SPAs mount on different roots — pyMC_Repeater's Vue bundle
+# uses #app, pymc_console uses #root. Try both before giving up.
+ANCHOR = None
+for cand in ('<div id="app"></div>', '<div id="root"></div>'):
+    if cand in content:
+        ANCHOR = cand
+        break
+if ANCHOR is None:
+    print("  WARN: cannot find <div id=\"app\"> or <div id=\"root\"> in index.html — skipping injection")
     sys.exit(0)
 
 # Two separate injections, each guarded independently so re-runs are safe
@@ -609,7 +693,7 @@ with open(target, "w") as f:
 print(f"  Injected into {target}: link={GUARD not in content}? setup-panel-script")
 INDEX_PATCH_EOF
     fi
-fi
+done
 
 # 5d. Exempt our 3 endpoints from the global JWT require_auth tool.
 # They have their own HTTP Basic auth (admin password from config.yaml).
@@ -749,7 +833,7 @@ fi
 
 # ─── 6. Check USB device ─────────────────────────────────────
 echo ""
-echo -e "${YELLOW}[6/6] Checking USB device...${NC}"
+echo -e "${YELLOW}[7/7] Checking USB device...${NC}"
 if ls /dev/ttyUSB* 2>/dev/null | head -1 > /dev/null; then
     USB_DEV=$(ls /dev/ttyUSB* 2>/dev/null | head -1)
     echo -e "  ${GREEN}Found: $USB_DEV${NC}"
