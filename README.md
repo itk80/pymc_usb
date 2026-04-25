@@ -52,9 +52,12 @@ pymc_usb/
 │   ├── tcp_radio.py               # TCPLoRaRadio — LoRaRadio over WiFi/TCP
 │   └── test_modem.py              # Standalone test (pyserial only)
 │
-├── patches/                       # Files to copy into pymc_core install
+├── patches/                       # Files applied by scripts/install.sh
 │   ├── common.py                  # → pymc_core examples/common.py
-│   └── hardware__init__.py        # → pymc_core/hardware/__init__.py
+│   ├── hardware__init__.py        # → pymc_core/hardware/__init__.py
+│   ├── radio-settings-additions.json  # merged into pymc_repeater radio-settings.json
+│   ├── heltec_endpoints.py        # 3 CherryPy methods injected into api_endpoints.py
+│   └── heltec_panel.html          # Heltec TCP config panel served at /api/heltec
 │
 ├── scripts/
 │   └── install.sh                 # one-shot: copy drivers + patch pymc_repeater
