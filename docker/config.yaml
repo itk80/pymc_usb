@@ -1,0 +1,98 @@
+# pyMC Repeater — Docker default (Heltec V3 modem, USB or Wi-Fi/TCP)
+# https://github.com/itk80/pymc_usb
+#
+# This file is baked into the image as /etc/pymc_repeater/config.yaml.default
+# and copied to /etc/pymc_repeater/config.yaml on first start (when the
+# config volume is empty). Env vars in docker-compose.yml override the
+# values below at every container start — see docker/entrypoint.sh.
+#
+# Defaults to tcp_heltec because containers usually don't have direct USB
+# access; switch to usb_heltec via RADIO_TYPE=usb_heltec + SERIAL_PORT.
+
+radio_type: tcp_heltec
+
+repeater:
+  node_name: "pyMC_USB_RPT"
+  latitude: 0.0
+  longitude: 0.0
+  identity_file: null
+  cache_ttl: 60
+  use_score_for_tx: false
+  score_threshold: 0.3
+  send_advert_interval_hours: 10
+  allow_discovery: true
+  security:
+    admin_password: admin123      # change immediately on first login
+
+mesh:
+  global_flood_allow: true
+
+# Radio parameters — EU/UK (Narrow), Switzerland preset
+radio:
+  frequency: 869618000
+  tx_power: 22
+  bandwidth: 62500
+  spreading_factor: 8
+  coding_rate: 8
+  preamble_length: 16
+  sync_word: 18
+  crc_enabled: true
+  implicit_header: false
+
+# Wi-Fi/TCP Heltec — active when radio_type: tcp_heltec
+# Override host with HELTEC_HOST env var (or use the Heltec config panel
+# in the web UI after the repeater starts).
+tcp_heltec:
+  host: 192.168.1.50
+  port: 5055
+  token: ""
+  connect_timeout: 5.0
+  lbt_enabled: true
+  lbt_max_attempts: 5
+
+# USB-CDC Heltec — active when radio_type: usb_heltec
+usb_heltec:
+  port: /dev/ttyUSB0
+  baudrate: 921600
+  lbt_enabled: true
+  lbt_max_attempts: 5
+
+delays:
+  tx_delay_factor: 1.0
+  direct_tx_delay_factor: 0.5
+
+duty_cycle:
+  enforcement_enabled: false
+  max_airtime_per_minute: 3600
+
+storage:
+  storage_dir: "/var/lib/pymc_repeater"
+  mqtt:
+    enabled: false
+    broker: "localhost"
+    port: 1883
+    username: null
+    password: null
+    base_topic: "meshcore/repeater"
+  retention:
+    sqlite_cleanup_days: 31
+
+letsmesh:
+  enabled: false
+  iata_code: "Test"
+  broker_index: 0
+  status_interval: 300
+  owner: ""
+  email: ""
+  disallowed_packet_types: []
+
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: /var/log/pymc_repeater/repeater.log
+
+web:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8000
+  cors_enabled: false

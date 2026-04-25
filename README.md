@@ -59,8 +59,15 @@ pymc_usb/
 ├── scripts/
 │   └── install.sh                 # one-shot: copy drivers + patch pymc_repeater
 │
+├── docker/                        # Container deployment (Wi-Fi/TCP by default)
+│   ├── Dockerfile                 # build with: docker compose build
+│   ├── entrypoint.sh              # config seed + env-var overrides
+│   └── config.yaml                # baked-in /etc/pymc_repeater/config.yaml.default
+│
+├── docker-compose.yml             # one-shot: `docker compose up -d --build`
 ├── config.yaml.example            # example /etc/pymc_repeater/config.yaml
 ├── README.md
+├── LICENSE
 └── INSTALL.md
 ```
 
@@ -154,6 +161,23 @@ radio.begin()
 # - Packets are sent with `await radio.send(data)`
 # - LBT (CAD) is run automatically before TX
 ```
+
+### 4. Docker (alternative — no native install needed)
+
+The image bundles pymc_repeater + pymc_core, runs `scripts/install.sh` at
+build time, and defaults to TCP mode so no USB passthrough is required.
+
+```bash
+# From repo root — set HELTEC_HOST in docker-compose.yml first
+docker compose up -d --build
+docker compose logs -f
+```
+
+Open the dashboard at `http://localhost:8000`. If you didn't set
+`HELTEC_HOST`, the repeater starts in deferred-connect mode — point the
+"Heltec config" panel in the web UI at the modem's real IP and the
+driver will connect on the fly. See `INSTALL.md` § 8 for env-var
+reference and USB-mode `--device` setup.
 
 ## Wire protocol v0.5.9
 

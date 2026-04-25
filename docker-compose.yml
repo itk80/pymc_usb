@@ -1,0 +1,59 @@
+# pyMC Repeater — Heltec modem (Wi-Fi/TCP by default, USB-CDC optional)
+#
+# Defaults to tcp_heltec: no USB passthrough, no dialout permissions needed,
+# Heltec lives anywhere on the LAN. Switch to usb_heltec by uncommenting
+# the SERIAL_PORT env var and the `devices:` block at the bottom.
+#
+# Usage:
+#   docker compose up -d --build
+#   docker compose logs -f
+#   Dashboard: http://localhost:8000
+
+services:
+  repeater:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: pymc-usb-repeater:latest
+    container_name: pymc-repeater
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - pymc-config:/etc/pymc_repeater
+      - pymc-state:/var/lib/pymc_repeater
+      - pymc-logs:/var/log/pymc_repeater
+    environment:
+      # ── Radio transport: "tcp_heltec" (default) or "usb_heltec" ──
+      - RADIO_TYPE=tcp_heltec
+
+      # ── TCP-mode settings (used when RADIO_TYPE=tcp_heltec) ──
+      # Set HELTEC_HOST to the modem's LAN IP or mDNS name. If left at the
+      # placeholder, the repeater starts in deferred-connect mode and you
+      # provision the host via the web UI's "Heltec config" panel.
+      - HELTEC_HOST=192.168.1.50
+      - HELTEC_PORT=5055
+      - HELTEC_TOKEN=                  # match the firmware NVS token, empty = open LAN
+
+      # ── USB-mode settings (used when RADIO_TYPE=usb_heltec) ──
+      # Also uncomment the `devices:` block below.
+      # - SERIAL_PORT=/dev/ttyUSB0
+
+      # ── Identity / web UI admin ──
+      - NODE_NAME=pyMC_USB_RPT
+      - ADMIN_PASSWORD=admin123        # change before exposing the dashboard
+
+      # ── Optional radio overrides ──
+      # - FREQUENCY=869618000
+      # - TX_POWER=22
+      # - SPREADING_FACTOR=8
+      # - BANDWIDTH=62500
+
+    # Uncomment only when RADIO_TYPE=usb_heltec and the Heltec is plugged in:
+    # devices:
+    #   - /dev/ttyUSB0:/dev/ttyUSB0
+
+volumes:
+  pymc-config:
+  pymc-state:
+  pymc-logs:

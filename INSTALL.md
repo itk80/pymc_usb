@@ -312,6 +312,81 @@ Retransmitted packet (X bytes, Yms airtime)   ← mesh forwarding is live
   be infrequent, not routine. Around ~27 % failure at SF8/62.5k is the
   baseline SX1262 IRQ-miss rate (same as on the SPI HAT reference).
 
+## 8. Docker deployment (alternative to native install)
+
+The image at `docker/Dockerfile` bundles pymc_repeater + pymc_core,
+runs `scripts/install.sh` at build time so all the patches in §5 (drivers,
+config.py branches, web setup wizard, Heltec config panel, JWT exemption,
+sticky link) land in the same place as a native install. Default transport
+is `tcp_heltec` — the modem lives on the LAN and the container has no need
+for `--device` or dialout group membership.
+
+### Build and run
+
+```bash
+# Edit HELTEC_HOST in docker-compose.yml first (or leave the placeholder
+# and finish setup from the web UI's Heltec config panel afterwards).
+docker compose up -d --build
+docker compose logs -f
+```
+
+Dashboard: `http://localhost:8000`. Three named volumes persist state:
+
+| Volume        | Mount point                 | Purpose                              |
+|---------------|-----------------------------|--------------------------------------|
+| `pymc-config` | `/etc/pymc_repeater`        | `config.yaml`, identity files        |
+| `pymc-state`  | `/var/lib/pymc_repeater`    | `radio-settings.json`, SQLite, MQTT  |
+| `pymc-logs`   | `/var/log/pymc_repeater`    | `repeater.log`                       |
+
+### Environment variables
+
+The entrypoint applies env-var overrides on every container start —
+change a value in `docker-compose.yml` and `docker compose up -d` to
+re-stamp the running config.
+
+| Variable                 | Default       | Notes                                     |
+|--------------------------|---------------|-------------------------------------------|
+| `RADIO_TYPE`             | `tcp_heltec`  | `tcp_heltec` or `usb_heltec`              |
+| `HELTEC_HOST`            | `192.168.1.50`| Modem LAN IP or `heltec-XXXXXX.local`     |
+| `HELTEC_PORT`            | `5055`        | Firmware TCP listener                     |
+| `HELTEC_TOKEN`           | *(empty)*     | Match the firmware NVS auth token         |
+| `HELTEC_CONNECT_TIMEOUT` | `5.0`         | Seconds — raise on slow Wi-Fi             |
+| `SERIAL_PORT`            | `/dev/ttyUSB0`| Used when `RADIO_TYPE=usb_heltec`         |
+| `BAUDRATE`               | `921600`      | USB-CDC baudrate (must match firmware)    |
+| `NODE_NAME`              | `pyMC_USB_RPT`| Repeater node name in the mesh            |
+| `ADMIN_PASSWORD`         | `admin123`    | Web UI admin — change before exposing     |
+| `FREQUENCY`              | `869618000`   | Hz                                        |
+| `TX_POWER`               | `22`          | dBm                                       |
+| `BANDWIDTH`              | `62500`       | Hz                                        |
+| `SPREADING_FACTOR`       | `8`           |                                           |
+| `CODING_RATE`            | `8`           | 4/8                                       |
+| `SYNC_WORD`              | `18`          | `0x12` (private)                          |
+| `PREAMBLE_LENGTH`        | `16`          | symbols                                   |
+
+### USB mode in containers
+
+USB-CDC requires passing the device through and matching the dialout group:
+
+```bash
+docker run -d --name repeater \
+  -p 8000:8000 \
+  --device=/dev/ttyUSB0:/dev/ttyUSB0 \
+  -e RADIO_TYPE=usb_heltec -e SERIAL_PORT=/dev/ttyUSB0 \
+  pymc-usb-repeater:latest
+```
+
+Or in `docker-compose.yml`, uncomment both `SERIAL_PORT` and the
+`devices:` block.
+
+### Deferred-connect
+
+If `HELTEC_HOST` stays at the placeholder (or is left unset), the
+container does **not** abort. `TCPLoRaRadio` enters deferred-connect
+mode and the entrypoint logs `[WARN] Modem not reachable yet` —
+finish provisioning by clicking **Heltec config** in the web UI's
+bottom-right corner and entering the real host. The driver reconnects
+on the fly with no service restart.
+
 ## File placement summary
 
 | Source file                    | Destination                                      |
