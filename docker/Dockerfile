@@ -9,10 +9,16 @@
 # Build (from repo root):
 #   docker build -f docker/Dockerfile -t pymc-usb-repeater .
 #
-# Run (TCP mode):
+# Run (TCP mode, host bind mounts so config/db/logs live under ./data):
 #   docker run -d --name repeater -p 8000:8000 \
 #     -e HELTEC_HOST=192.168.1.50 -e HELTEC_PORT=5055 \
+#     -v $(pwd)/data/config:/etc/pymc_repeater \
+#     -v $(pwd)/data/state:/var/lib/pymc_repeater \
+#     -v $(pwd)/data/logs:/var/log/pymc_repeater \
 #     pymc-usb-repeater
+#
+# Or just `docker compose up -d --build` from the repo root, which
+# wires the same bind mounts via docker-compose.yml.
 #
 # Run (USB mode):
 #   docker run -d --name repeater \
@@ -30,6 +36,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git usbutils curl ca-certificates \
         build-essential \
+        gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Dialout group keeps USB-CDC mode usable when the host passes --device.
@@ -72,11 +79,12 @@ RUN printf "radio_type: tcp_heltec\n" > /etc/pymc_repeater/config.yaml
 #     systemctl is absent → install.sh's restart block silently skips. ---
 RUN chmod +x scripts/install.sh && scripts/install.sh
 
-# --- Replace the sentinel with the real Docker default; the entrypoint
-#     re-seeds /etc/pymc_repeater/config.yaml from .default on first run. ---
-COPY docker/config.yaml /etc/pymc_repeater/config.yaml.default
+# --- Stash the Docker default OUTSIDE /etc/pymc_repeater/ so a host
+#     bind mount over that directory doesn't hide it. The entrypoint
+#     copies it into the (possibly empty) mount on first start. ---
+COPY docker/config.yaml /opt/pymc_repeater/config.yaml.default
 RUN rm -f /etc/pymc_repeater/config.yaml \
-    && chown -R repeater:repeater /etc/pymc_repeater
+    && chown -R repeater:repeater /etc/pymc_repeater /opt/pymc_repeater/config.yaml.default
 
 COPY docker/entrypoint.sh /opt/pymc_repeater/entrypoint.sh
 RUN chmod +x /opt/pymc_repeater/entrypoint.sh
@@ -89,5 +97,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD curl -sf http://localhost:8000/ || exit 1
 
-USER repeater
+# Entry runs as root so it can chown bind-mounted volumes (which arrive
+# with whatever uid:gid exists on the host); the entrypoint then drops
+# to the `repeater` user via gosu before exec'ing the daemon.
 ENTRYPOINT ["/opt/pymc_repeater/entrypoint.sh"]

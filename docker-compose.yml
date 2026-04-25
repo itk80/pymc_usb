@@ -4,10 +4,17 @@
 # Heltec lives anywhere on the LAN. Switch to usb_heltec by uncommenting
 # the SERIAL_PORT env var and the `devices:` block at the bottom.
 #
+# Per-deployment overrides go in a `.env` file next to this compose file
+# (gitignored). Typical contents:
+#     HOST_PORT=8001
+#     HELTEC_HOST=192.168.1.50
+#     HELTEC_PORT=5055
+#     ADMIN_PASSWORD=changeit
+#
 # Usage:
 #   docker compose up -d --build
 #   docker compose logs -f
-#   Dashboard: http://localhost:8000
+#   Dashboard: http://localhost:${HOST_PORT:-8000}
 
 services:
   repeater:
@@ -18,30 +25,37 @@ services:
     container_name: pymc-repeater
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${HOST_PORT:-8000}:8000"
+    # Bind mounts so config / database / logs live on the HOST under
+    # ./data, not in a docker-managed volume. Survives `docker rm`,
+    # easy to back up, and you can edit config.yaml with your normal
+    # editor. Directories are auto-created on first start; the
+    # container chowns them to its `repeater` uid so the daemon (which
+    # drops privileges via gosu) can write to them.
     volumes:
-      - pymc-config:/etc/pymc_repeater
-      - pymc-state:/var/lib/pymc_repeater
-      - pymc-logs:/var/log/pymc_repeater
+      - ./data/config:/etc/pymc_repeater
+      - ./data/state:/var/lib/pymc_repeater
+      - ./data/logs:/var/log/pymc_repeater
     environment:
       # ── Radio transport: "tcp_heltec" (default) or "usb_heltec" ──
       - RADIO_TYPE=tcp_heltec
 
       # ── TCP-mode settings (used when RADIO_TYPE=tcp_heltec) ──
-      # Set HELTEC_HOST to the modem's LAN IP or mDNS name. If left at the
-      # placeholder, the repeater starts in deferred-connect mode and you
-      # provision the host via the web UI's "Heltec config" panel.
-      - HELTEC_HOST=192.168.1.50
-      - HELTEC_PORT=5055
-      - HELTEC_TOKEN=                  # match the firmware NVS token, empty = open LAN
+      # Set HELTEC_HOST in your .env to the modem's LAN IP or mDNS name.
+      # If left at the placeholder, the repeater starts in deferred-connect
+      # mode and you provision the host via the web UI's setup wizard or
+      # the "Heltec config" panel.
+      - HELTEC_HOST=${HELTEC_HOST:-192.168.1.50}
+      - HELTEC_PORT=${HELTEC_PORT:-5055}
+      - HELTEC_TOKEN=${HELTEC_TOKEN:-}      # match the firmware NVS token, empty = open LAN
 
       # ── USB-mode settings (used when RADIO_TYPE=usb_heltec) ──
       # Also uncomment the `devices:` block below.
       # - SERIAL_PORT=/dev/ttyUSB0
 
       # ── Identity / web UI admin ──
-      - NODE_NAME=pyMC_USB_RPT
-      - ADMIN_PASSWORD=admin123        # change before exposing the dashboard
+      - NODE_NAME=${NODE_NAME:-pyMC_USB_RPT}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}     # change before exposing the dashboard
 
       # ── Optional radio overrides ──
       # - FREQUENCY=869618000
@@ -52,8 +66,3 @@ services:
     # Uncomment only when RADIO_TYPE=usb_heltec and the Heltec is plugged in:
     # devices:
     #   - /dev/ttyUSB0:/dev/ttyUSB0
-
-volumes:
-  pymc-config:
-  pymc-state:
-  pymc-logs:

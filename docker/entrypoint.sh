@@ -2,10 +2,16 @@
 # =============================================================================
 # pyMC Repeater container entrypoint
 #
-# Two responsibilities:
-#   1. On first start (volume empty), seed /etc/pymc_repeater/config.yaml
+# Three responsibilities:
+#   1. If we were started as root (typical when bind-mounted host
+#      directories arrive with arbitrary ownership), chown the data
+#      directories to `repeater` and re-exec ourselves under that user
+#      via gosu. That way config / db / logs end up with predictable
+#      ownership on the host filesystem and the daemon never runs as
+#      root.
+#   2. On first start (volume empty), seed /etc/pymc_repeater/config.yaml
 #      from the baked-in /etc/pymc_repeater/config.yaml.default.
-#   2. Apply env-var overrides (HELTEC_HOST/PORT/TOKEN, SERIAL_PORT, …) to
+#   3. Apply env-var overrides (HELTEC_HOST/PORT/TOKEN, SERIAL_PORT, …) to
 #      the live config via PyYAML, so the user can change radio settings
 #      without rebuilding the image.
 #
@@ -17,13 +23,27 @@
 set -e
 
 CONFIG="/etc/pymc_repeater/config.yaml"
-DEFAULT="/etc/pymc_repeater/config.yaml.default"
+# Default lives OUTSIDE /etc/pymc_repeater/ on purpose — a host bind
+# mount over that directory would otherwise hide the baked-in template.
+DEFAULT="/opt/pymc_repeater/config.yaml.default"
+DATA_DIRS=(/etc/pymc_repeater /var/lib/pymc_repeater /var/log/pymc_repeater)
+
+# Step 1: privilege drop. Re-exec as `repeater` after fixing ownership
+# of any bind-mounted directories. Skipped if the operator already
+# pinned a uid via `docker run --user` (then we trust their setup).
+if [ "$(id -u)" = "0" ]; then
+    for d in "${DATA_DIRS[@]}"; do
+        mkdir -p "$d"
+        chown -R repeater:repeater "$d" 2>/dev/null || true
+    done
+    exec gosu repeater "$0" "$@"
+fi
 
 echo "=========================================="
 echo "  pyMC Repeater (Heltec USB / TCP modem)"
 echo "=========================================="
 
-# Seed config from baked-in default on first start (volume is empty).
+# Seed config from baked-in default on first start (volume / bind mount empty).
 if [ ! -f "$CONFIG" ]; then
     cp "$DEFAULT" "$CONFIG"
     echo "[OK] Seeded $CONFIG from default"

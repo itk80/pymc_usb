@@ -330,13 +330,21 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-Dashboard: `http://localhost:8000`. Three named volumes persist state:
+Dashboard: `http://localhost:8000`. Three host bind mounts under
+`./data/` (relative to the compose file) keep config / database / logs
+on the host filesystem so they survive `docker rm`, can be backed up
+with the usual file tools, and can be edited without `docker exec`:
 
-| Volume        | Mount point                 | Purpose                              |
-|---------------|-----------------------------|--------------------------------------|
-| `pymc-config` | `/etc/pymc_repeater`        | `config.yaml`, identity files        |
-| `pymc-state`  | `/var/lib/pymc_repeater`    | `radio-settings.json`, SQLite, MQTT  |
-| `pymc-logs`   | `/var/log/pymc_repeater`    | `repeater.log`                       |
+| Host path             | Container mount             | Purpose                              |
+|-----------------------|-----------------------------|--------------------------------------|
+| `./data/config/`      | `/etc/pymc_repeater`        | `config.yaml`, identity files        |
+| `./data/state/`       | `/var/lib/pymc_repeater`    | `radio-settings.json`, SQLite, MQTT  |
+| `./data/logs/`        | `/var/log/pymc_repeater`    | `repeater.log`                       |
+
+The directories are auto-created on first start. The container starts
+as root just long enough to chown them to its `repeater` user, then
+drops privileges via `gosu` — so the daemon never runs as root and the
+files are still owned by the same uid every time.
 
 ### Environment variables
 
