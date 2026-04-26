@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Heltec TCP — pymc_usb</title>
+<title>pymc_tcp — pymc_usb</title>
 <style>
   body{font-family:system-ui,sans-serif;max-width:520px;margin:1.5em auto;padding:0 1em;color:#222}
   h1{font-size:1.4em;margin-bottom:.3em}
@@ -22,14 +22,15 @@
 </head>
 <body>
 
-<h1>Heltec TCP modem</h1>
+<h1>pymc_tcp modem</h1>
 <div class="sub">Set the IP/hostname, port and optional token used by the
-<code>tcp_heltec</code> radio. Changes apply live — no service restart required.</div>
+<code>pymc_tcp</code> radio. Changes apply live — no service restart required.</div>
 
 <form id="cfg-form">
   <label>Host
-    <span class="hint">— mDNS hostname (<code>heltec-XXXXXX.local</code>) or LAN IP</span>
-    <input id="host" name="host" required autocomplete="off" placeholder="heltec-3e2834.local">
+    <span class="hint">— mDNS hostname (<code>ikoka-XXXXXX.local</code> /
+    <code>heltec-XXXXXX.local</code>) or LAN IP</span>
+    <input id="host" name="host" required autocomplete="off" placeholder="ikoka-3e2834.local">
   </label>
 
   <label>Port
@@ -52,7 +53,7 @@ const $ = (id) => document.getElementById(id);
 
 async function loadConfig() {
   try {
-    const r = await fetch('/api/get_tcp_heltec_config', {credentials: 'include'});
+    const r = await fetch('/api/get_pymc_tcp_config', {credentials: 'include'});
     if (r.status === 401) { window.location.reload(); return; }
     const d = await r.json();
     $('host').value  = d.host || '';
@@ -80,7 +81,7 @@ $('cfg-form').onsubmit = async (e) => {
   if ($('token').value !== '') body.token = $('token').value;
 
   try {
-    const r = await fetch('/api/update_tcp_heltec_config', {
+    const r = await fetch('/api/update_pymc_tcp_config', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       credentials: 'include',

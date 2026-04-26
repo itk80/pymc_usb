@@ -1,19 +1,23 @@
     # =========================================================================
-    # pymc_usb — Heltec TCP panel endpoints (basic-auth gated)
+    # pymc_usb — pymc_tcp panel endpoints (basic-auth gated)
     # =========================================================================
     #
     # Three routes are added by scripts/install.sh:
-    #   GET  /heltec                       → static HTML panel (heltec_panel.html)
-    #   GET  /api/get_tcp_heltec_config    → returns current host/port/token state
-    #   POST /api/update_tcp_heltec_config → writes config.yaml + live-pushes to driver
+    #   GET  /pymc_tcp                      → static HTML panel (pymc_tcp_panel.html)
+    #   GET  /api/get_pymc_tcp_config       → returns current host/port/token state
+    #   POST /api/update_pymc_tcp_config    → writes config.yaml + live-pushes to driver
     #
     # All three require HTTP Basic auth with admin password from
     # config.yaml -> repeater.security.admin_password. We deliberately don't
     # tie this to the JWT flow because the panel is a single-page form
     # opened from a browser, and Basic auth gives the user a native prompt
     # without needing the SPA's login machinery.
+    #
+    # Backwards-compat: the legacy `tcp_heltec` config-section name is
+    # still accepted on read; on write we always emit the new `pymc_tcp`
+    # name so files migrate forward on first edit.
 
-    def _heltec_basic_auth(self):
+    def _pymc_tcp_basic_auth(self):
         """Raise 401 if Authorization header doesn't match admin password."""
         import base64
         auth = cherrypy.request.headers.get("Authorization", "")
@@ -23,36 +27,51 @@
             .get("admin_password", "")
         )
         if not auth.startswith("Basic ") or not expected_pw:
-            cherrypy.response.headers["WWW-Authenticate"] = 'Basic realm="Heltec TCP panel"'
+            cherrypy.response.headers["WWW-Authenticate"] = 'Basic realm="pymc_tcp panel"'
             raise cherrypy.HTTPError(401, "Authentication required")
         try:
             user, _, password = base64.b64decode(auth[6:]).decode("utf-8").partition(":")
         except Exception:
-            cherrypy.response.headers["WWW-Authenticate"] = 'Basic realm="Heltec TCP panel"'
+            cherrypy.response.headers["WWW-Authenticate"] = 'Basic realm="pymc_tcp panel"'
             raise cherrypy.HTTPError(401, "Bad credentials")
         # User name is ignored — we only check the password against admin_password.
         if password != expected_pw:
-            cherrypy.response.headers["WWW-Authenticate"] = 'Basic realm="Heltec TCP panel"'
+            cherrypy.response.headers["WWW-Authenticate"] = 'Basic realm="pymc_tcp panel"'
             raise cherrypy.HTTPError(401, "Bad credentials")
 
+    def _pymc_tcp_section(self, cfg):
+        """Return the live pymc_tcp dict, transparently merging any legacy
+        tcp_heltec keys so old configs keep working."""
+        section = cfg.get("pymc_tcp")
+        legacy = cfg.get("tcp_heltec")
+        if section is None and legacy is None:
+            return {}
+        if section is None:
+            return dict(legacy or {})
+        if legacy:
+            merged = dict(legacy)
+            merged.update(section)
+            return merged
+        return dict(section)
+
     @cherrypy.expose
-    def heltec(self):
-        """Serve the static Heltec TCP configuration panel."""
-        self._heltec_basic_auth()
+    def pymc_tcp(self):
+        """Serve the static pymc_tcp configuration panel."""
+        self._pymc_tcp_basic_auth()
         import os
-        html_path = os.path.join(os.path.dirname(__file__), "html", "heltec_panel.html")
+        html_path = os.path.join(os.path.dirname(__file__), "html", "pymc_tcp_panel.html")
         if not os.path.exists(html_path):
-            raise cherrypy.HTTPError(500, "heltec_panel.html missing — re-run install.sh")
+            raise cherrypy.HTTPError(500, "pymc_tcp_panel.html missing — re-run install.sh")
         cherrypy.response.headers["Content-Type"] = "text/html; charset=utf-8"
         with open(html_path, "rb") as f:
             return f.read()
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
-    def get_tcp_heltec_config(self):
-        """Read-only view of the current tcp_heltec block."""
-        self._heltec_basic_auth()
-        tcp = self.config.get("tcp_heltec", {}) or {}
+    def get_pymc_tcp_config(self):
+        """Read-only view of the current pymc_tcp block (with tcp_heltec fallback)."""
+        self._pymc_tcp_basic_auth()
+        tcp = self._pymc_tcp_section(self.config)
         return {
             "radio_type": self.config.get("radio_type", ""),
             "host": tcp.get("host", ""),
@@ -63,9 +82,9 @@
     @cherrypy.expose
     @cherrypy.tools.json_out()
     @cherrypy.tools.json_in()
-    def update_tcp_heltec_config(self):
+    def update_pymc_tcp_config(self):
         """Persist host/port/token to config.yaml and live-push to the driver."""
-        self._heltec_basic_auth()
+        self._pymc_tcp_basic_auth()
         try:
             self._require_post()
             data = cherrypy.request.json or {}
@@ -82,20 +101,28 @@
             import yaml
             with open(self._config_path, "r") as f:
                 cfg = yaml.safe_load(f) or {}
-            cfg.setdefault("tcp_heltec", {})
-            cfg["tcp_heltec"]["host"] = host
-            cfg["tcp_heltec"]["port"] = port
+
+            # Migrate any legacy tcp_heltec section into the new name on
+            # first save, then drop the duplicate.
+            if "tcp_heltec" in cfg and "pymc_tcp" not in cfg:
+                cfg["pymc_tcp"] = cfg.pop("tcp_heltec")
+            elif "tcp_heltec" in cfg:
+                cfg.pop("tcp_heltec", None)
+
+            cfg.setdefault("pymc_tcp", {})
+            cfg["pymc_tcp"]["host"] = host
+            cfg["pymc_tcp"]["port"] = port
 
             # Token is optional. Only overwrite if the client sent the field
             # explicitly (empty string from "leave unchanged" UI doesn't count).
             new_token = None
             if "token" in data:
                 new_token = data.get("token") or ""
-                cfg["tcp_heltec"]["token"] = new_token
+                cfg["pymc_tcp"]["token"] = new_token
 
-            # Force radio_type to tcp_heltec — applying these settings only
+            # Force radio_type to pymc_tcp — applying these settings only
             # makes sense for that mode.
-            cfg["radio_type"] = "tcp_heltec"
+            cfg["radio_type"] = "pymc_tcp"
 
             with open(self._config_path, "w") as f:
                 yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
@@ -120,10 +147,10 @@
                     "Saved to config.yaml. Restart the service if the driver "
                     "isn't picking up the change automatically."
                 ),
-                "config": {"host": host, "port": port, "has_token": bool(cfg["tcp_heltec"].get("token"))},
+                "config": {"host": host, "port": port, "has_token": bool(cfg["pymc_tcp"].get("token"))},
             }
         except cherrypy.HTTPError:
             raise
         except Exception as e:
-            logger.error(f"update_tcp_heltec_config failed: {e}", exc_info=True)
+            logger.error(f"update_pymc_tcp_config failed: {e}", exc_info=True)
             return {"success": False, "error": str(e)}

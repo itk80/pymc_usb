@@ -1,15 +1,18 @@
-# pyMC Repeater — Heltec modem (Wi-Fi/TCP by default, USB-CDC optional)
+# pyMC Repeater — pymc_usb / pymc_tcp modem (Wi-Fi/TCP by default, USB-CDC optional)
 #
-# Defaults to tcp_heltec: no USB passthrough, no dialout permissions needed,
-# Heltec lives anywhere on the LAN. Switch to usb_heltec by uncommenting
+# Defaults to pymc_tcp: no USB passthrough, no dialout permissions needed,
+# the modem lives anywhere on the LAN. Switch to pymc_usb by uncommenting
 # the SERIAL_PORT env var and the `devices:` block at the bottom.
 #
 # Per-deployment overrides go in a `.env` file next to this compose file
 # (gitignored). Typical contents:
 #     HOST_PORT=8001
-#     HELTEC_HOST=192.168.1.50
-#     HELTEC_PORT=5055
+#     PYMC_TCP_HOST=192.168.1.50
+#     PYMC_TCP_PORT=5055
 #     ADMIN_PASSWORD=changeit
+#
+# Legacy HELTEC_* env vars are still honoured by the container entrypoint
+# as fallbacks — pre-rename .env files keep working without edits.
 #
 # Usage:
 #   docker compose up -d --build
@@ -41,19 +44,19 @@ services:
       - ./data/state:/var/lib/pymc_repeater
       - ./data/logs:/var/log/pymc_repeater
     environment:
-      # ── Radio transport: "tcp_heltec" (default) or "usb_heltec" ──
-      - RADIO_TYPE=tcp_heltec
+      # ── Radio transport: "pymc_tcp" (default) or "pymc_usb" ──
+      - RADIO_TYPE=pymc_tcp
 
-      # ── TCP-mode settings (used when RADIO_TYPE=tcp_heltec) ──
-      # Set HELTEC_HOST in your .env to the modem's LAN IP or mDNS name.
-      # If left at the placeholder, the repeater starts in deferred-connect
-      # mode and you provision the host via the web UI's setup wizard or
-      # the "Heltec config" panel.
-      - HELTEC_HOST=${HELTEC_HOST:-192.168.1.50}
-      - HELTEC_PORT=${HELTEC_PORT:-5055}
-      - HELTEC_TOKEN=${HELTEC_TOKEN:-}      # match the firmware NVS token, empty = open LAN
+      # ── TCP-mode settings (used when RADIO_TYPE=pymc_tcp) ──
+      # Set PYMC_TCP_HOST in your .env to the modem's LAN IP or mDNS
+      # name. If left at the placeholder, the repeater starts in
+      # deferred-connect mode and you provision the host via the web
+      # UI's setup wizard or the "pymc_tcp config" panel.
+      - PYMC_TCP_HOST=${PYMC_TCP_HOST:-192.168.1.50}
+      - PYMC_TCP_PORT=${PYMC_TCP_PORT:-5055}
+      - PYMC_TCP_TOKEN=${PYMC_TCP_TOKEN:-}    # match the firmware NVS token, empty = open LAN
 
-      # ── USB-mode settings (used when RADIO_TYPE=usb_heltec) ──
+      # ── USB-mode settings (used when RADIO_TYPE=pymc_usb) ──
       # Also uncomment the `devices:` block below.
       # - SERIAL_PORT=/dev/ttyUSB0
 
@@ -67,6 +70,6 @@ services:
       # - SPREADING_FACTOR=8
       # - BANDWIDTH=62500
 
-    # Uncomment only when RADIO_TYPE=usb_heltec and the Heltec is plugged in:
+    # Uncomment only when RADIO_TYPE=pymc_usb and the modem is plugged in:
     # devices:
     #   - /dev/ttyUSB0:/dev/ttyUSB0

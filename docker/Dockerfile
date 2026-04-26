@@ -1,17 +1,17 @@
 # =============================================================================
-# pyMC Repeater + Heltec modem (Wi-Fi/TCP or USB-CDC)
+# pyMC Repeater + pymc_usb / pymc_tcp modem (Wi-Fi/TCP or USB-CDC)
 # https://github.com/itk80/pymc_usb
 #
-# Default transport is tcp_heltec — the Heltec board lives on the LAN and
-# the container talks to it over TCP, no USB passthrough required. Switch
-# to usb_heltec via env vars if you want to plug the modem into the host.
+# Default transport is pymc_tcp — the modem lives on the LAN and the
+# container talks to it over TCP, no USB passthrough required. Switch
+# to pymc_usb via env vars if you want to plug the modem into the host.
 #
 # Build (from repo root):
 #   docker build -f docker/Dockerfile -t pymc-usb-repeater .
 #
 # Run (TCP mode, host bind mounts so config/db/logs live under ./data):
 #   docker run -d --name repeater -p 8000:8000 \
-#     -e HELTEC_HOST=192.168.1.50 -e HELTEC_PORT=5055 \
+#     -e PYMC_TCP_HOST=192.168.1.50 -e PYMC_TCP_PORT=5055 \
 #     -v $(pwd)/data/config:/etc/pymc_repeater \
 #     -v $(pwd)/data/state:/var/lib/pymc_repeater \
 #     -v $(pwd)/data/logs:/var/log/pymc_repeater \
@@ -24,7 +24,7 @@
 #   docker run -d --name repeater \
 #     --device=/dev/ttyUSB0:/dev/ttyUSB0 \
 #     -p 8000:8000 \
-#     -e RADIO_TYPE=usb_heltec -e SERIAL_PORT=/dev/ttyUSB0 \
+#     -e RADIO_TYPE=pymc_usb -e SERIAL_PORT=/dev/ttyUSB0 \
 #     pymc-usb-repeater
 # =============================================================================
 
@@ -72,10 +72,10 @@ RUN mkdir -p /etc/pymc_repeater /var/lib/pymc_repeater /var/log/pymc_repeater \
 
 # Pre-seed a sentinel config.yaml so install.sh skips its config-installer
 # step (section [4/6]) — we provide our own docker/config.yaml.default below.
-RUN printf "radio_type: tcp_heltec\n" > /etc/pymc_repeater/config.yaml
+RUN printf "radio_type: pymc_tcp\n" > /etc/pymc_repeater/config.yaml
 
 # --- Run the canonical installer: drivers, config.py, radio-settings.json,
-#     setup_wizard, Heltec panel HTML+endpoints, JWT exemption, sticky link.
+#     setup_wizard, pymc_tcp panel HTML+endpoints, JWT exemption, sticky link.
 #     systemctl is absent → install.sh's restart block silently skips. ---
 RUN chmod +x scripts/install.sh && scripts/install.sh
 

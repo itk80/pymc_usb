@@ -1,11 +1,17 @@
-# Heltec LoRa Modem — USB/TCP Radio Driver for pymc_core
+# pymc_usb — USB/TCP LoRa Modem for pymc_core
 
-Firmware + Python driver that turns a **Heltec WiFi LoRa 32 V3** (ESP32-S3 + SX1262)
-into a "dumb" LoRa modem controlled from a Raspberry Pi over USB-CDC or WiFi/TCP.
+Firmware + Python driver that turns an ESP32-S3 board with an SX1262
+front end into a "dumb" LoRa modem controlled from a Raspberry Pi over
+USB-CDC or Wi-Fi/TCP.
+
+**Supported boards** (one source tree, picked at compile time):
+
+- **Heltec WiFi LoRa 32 V3** — ESP32-S3 + bare SX1262, integrated OLED
+- **Ikoka Stick** ([ndoo/ikoka-stick-meshtastic-device](https://github.com/ndoo/ikoka-stick-meshtastic-device)) — XIAO ESP32-S3 + Ebyte E22-P868M30S (SX1262 + PA + LNA, 30 dBm) + external SSD1306
 
 Drop-in replacement for `SX1262Radio` in pymc_core — all MeshCore logic
-(routing, encryption, retransmission) runs on the RPi. The Heltec handles only
-the SX1262 physical layer: TX, RX, CAD, LoRa parameter configuration.
+(routing, encryption, retransmission) runs on the RPi. The modem handles
+only the SX1262 physical layer: TX, RX, CAD, LoRa parameter configuration.
 
 ## Architecture
 
@@ -22,7 +28,7 @@ Raspberry Pi                                  Heltec V3
 ```
 
 - **USB mode** — cable, instant, no provisioning; ideal for single-board setups.
-- **Wi-Fi/TCP mode** — no cable; Heltec can live anywhere on the LAN while the
+- **Wi-Fi/TCP mode** — no cable; modem can live anywhere on the LAN while the
   Pi sits elsewhere. Provisioned once via on-device AP portal (open AP
   `LoRa-Modem-XXXX` → `http://192.168.4.1`) or over USB with
   `USBLoRaRadio.set_wifi_credentials()`.
@@ -31,13 +37,17 @@ Raspberry Pi                                  Heltec V3
 
 ```
 pymc_usb/
-├── firmware/                      # Heltec V3 firmware (PlatformIO)
-│   ├── platformio.ini
-│   ├── bootloader.bin             # prebuilt v0.5.9 (offset 0x0)
-│   ├── partitions.bin             # prebuilt v0.5.9 (offset 0x8000)
-│   ├── firmware.bin               # prebuilt v0.5.9 (offset 0x10000)
+├── firmware/                      # Shared firmware tree (PlatformIO)
+│   ├── platformio.ini             # two envs: heltec_v3 + ikoka_stick
+│   ├── bootloader.bin             # prebuilt heltec_v3 (offset 0x0)
+│   ├── partitions.bin             # prebuilt heltec_v3 (offset 0x8000)
+│   ├── firmware.bin               # prebuilt heltec_v3 (offset 0x10000)
 │   ├── include/
 │   │   ├── protocol.h             # Binary protocol (shared FW ↔ Python)
+│   │   ├── board_config.h         # BoardConfig + RfSwitchPolicy types
+│   │   ├── boards/
+│   │   │   ├── heltec_v3.h        # Pin map + RF switch policy per board
+│   │   │   └── ikoka_stick.h
 │   │   ├── oled_display.h
 │   │   ├── wifi_manager.h
 │   │   ├── tcp_server.h
@@ -56,8 +66,9 @@ pymc_usb/
 │   ├── common.py                  # → pymc_core examples/common.py
 │   ├── hardware__init__.py        # → pymc_core/hardware/__init__.py
 │   ├── radio-settings-additions.json  # merged into pymc_repeater radio-settings.json
-│   ├── heltec_endpoints.py        # 3 CherryPy methods injected into api_endpoints.py
-│   └── heltec_panel.html          # Heltec TCP config panel served at /api/heltec
+│   ├── pymc_tcp_endpoints.py      # 3 CherryPy methods injected into api_endpoints.py
+│   ├── pymc_tcp_panel.html        # pymc_tcp config panel served at /api/pymc_tcp
+│   └── pymc_tcp_setup_panel.js    # /setup wizard inline host/port/token block
 │
 ├── scripts/
 │   └── install.sh                 # one-shot: copy drivers + patch pymc_repeater
@@ -79,6 +90,50 @@ pymc_usb/
 Native install, Docker deployment, firmware flashing (esptool / PlatformIO /
 OTA), Wi-Fi provisioning and the full pymc_core integration steps are
 documented in [INSTALL.md](INSTALL.md).
+
+## Per-board pin map
+
+All board-specific GPIOs live in `firmware/include/boards/<name>.h`.
+Adding a new SX1262 carrier board is a one-file job — copy one of the
+existing headers and edit pins / RF-switch policy.
+
+| | Heltec V3 | Ikoka Stick |
+|--|--|--|
+| MCU | ESP32-S3 (built-in) | XIAO ESP32-S3 (socketed) |
+| LoRa front end | bare SX1262 | Ebyte E22-P868M30S (SX1262 + PA + LNA) |
+| LoRa SPI NSS / RST / BUSY / DIO1 | 8 / 12 / 13 / 14 | 5 / 3 / 4 / 2 |
+| OLED I2C SDA / SCL / RST | 17 / 18 / 21 | 43 / 44 / — |
+| OLED VEXT enable (active-LOW) | 36 | — (powered from 3V3) |
+| User button (PRG) | GPIO 0 | GPIO 1 (D0) |
+| Max TX power | 22 dBm | **30 dBm** (firmware ceiling) |
+| RF switch policy | DIO2 → SX1262 internal | EN held HIGH + DIO2 → external TXEN trace |
+| mDNS hostname | `heltec-<MAC3>.local` | `ikoka-<MAC3>.local` |
+
+### E22-P RF switch handling (Ikoka & future Ebyte boards)
+
+The E22-P series exposes two control pins per the [E22 datasheet §4.2
+truth table](_incoming/E22P-xxxMxxS_UserManual_FR_v1.1.pdf):
+
+| EN | T/R CTRL | Mode |
+|---|---|---|
+| 1 | 1 | TX |
+| 1 | 0 | RX |
+| 0 | × | CLOSE |
+
+On Ikoka the firmware drives them like this:
+
+- **EN (module pin 6, GPIO 6)** — held LOW for 5 s at boot so the LDOs
+  and PA bias settle, then latched HIGH for the rest of the device's
+  lifetime. Never toggled by TX/RX.
+- **T/R CTRL (module pin 7)** — not wired to MCU. The Ikoka PCB has
+  a trace from module pin 8 (SX1262 DIO2) to pin 7, and firmware
+  enables `radio.setDio2AsRfSwitch(true)` so the SX1262 toggles it
+  HIGH on TX automatically.
+
+The full policy is captured per-board in `RfSwitchPolicy`
+(see `firmware/include/board_config.h`); a future board with two
+separate MCU-driven enable lines just sets `rx_pin` / `tx_pin` and
+RadioLib's `setRfSwitchPins` takes care of toggling.
 
 ## Wire protocol v0.5.9
 

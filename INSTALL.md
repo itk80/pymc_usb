@@ -2,59 +2,89 @@
 
 All commands assume you are in the repository root `pymc_usb/`.
 
-## 1. Flash the firmware on a Heltec V3
+## 1. Flash the firmware
 
-### 1a. Prebuilt binaries (no PlatformIO) — recommended for end users
+The same source tree builds two binaries; pick the env that matches
+your board:
 
-`firmware/` ships three prebuilt v0.5.9 artefacts:
+| Board | PlatformIO env | mDNS name |
+|---|---|---|
+| Heltec WiFi LoRa 32 V3 | `heltec_v3` | `heltec-<mac3>.local` |
+| Ikoka Stick (XIAO ESP32-S3 + E22-P868M30S) | `ikoka_stick` | `ikoka-<mac3>.local` |
+
+### 1a. Prebuilt binaries (no PlatformIO) — Heltec V3 only
+
+`firmware/` ships prebuilt artefacts for the Heltec env. For the Ikoka
+env build from source (§ 1b) — there are no pre-flashed binaries since
+the project doesn't ship hardware.
 
 - `bootloader.bin` (15 kB, offset `0x0`)
 - `partitions.bin` (3 kB, offset `0x8000`)
-- `firmware.bin` (841 kB, offset `0x10000`)
+- `firmware.bin`   (~850 kB, offset `0x10000`)
 
 ```bash
 pip install esptool
 
-# Full flash (fresh Heltec, first install):
+# Full flash (fresh board, first install):
 esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 921600 write_flash \
     0x0     firmware/bootloader.bin \
     0x8000  firmware/partitions.bin \
     0x10000 firmware/firmware.bin
 
-# App-only update (Heltec that already has a matching bootloader):
+# App-only update (board that already has a matching bootloader):
 esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 921600 write_flash \
     0x10000 firmware/firmware.bin
 ```
 
-On macOS the port is usually `/dev/cu.usbserial-*`. If the Heltec doesn't
+On macOS the port is usually `/dev/cu.usbserial-*`. If the board doesn't
 enter flash mode automatically, hold **BOOT** while plugging in USB and
 release it once `esptool.py` starts. After flashing press **RST** or
 replug USB.
 
-### 1b. Build and flash with PlatformIO (for developers)
+### 1b. Build and flash with PlatformIO
 
 ```bash
 cd firmware
+
+# Heltec V3
 pio run -e heltec_v3 -t upload
+
+# Ikoka Stick (XIAO ESP32-S3 + E22-P868M30S)
+pio run -e ikoka_stick -t upload
 ```
 
-### 1c. OTA update over WiFi (after the first flash — no cable)
+The XIAO board enters bootloader mode automatically when PlatformIO
+issues the reset; if not, double-tap RESET on the XIAO to enter the
+Adafruit/SAM-DA bootloader, or hold BOOT while plugging USB.
 
-Once the Heltec is provisioned and visible via mDNS (`heltec-<mac3>.local`):
+### 1c. OTA update over Wi-Fi (after the first flash — no cable)
+
+Once the board is provisioned and visible via mDNS:
 
 ```bash
-# From firmware/
+# From firmware/ — Heltec
 pio run -e heltec_v3 -t upload --upload-port heltec-abcdef.local
+# Or plain HTTP:
+curl -F firmware=@.pio/build/heltec_v3/firmware.bin http://heltec-abcdef.local/update
 
-# Or plain HTTP without PlatformIO:
-curl -F firmware=@firmware/firmware.bin http://heltec-abcdef.local/update
+# Ikoka
+pio run -e ikoka_stick -t upload --upload-port ikoka-abcdef.local
+curl -F firmware=@.pio/build/ikoka_stick/firmware.bin http://ikoka-abcdef.local/update
 ```
 
-The Heltec reboots automatically after upload. The old firmware is **not**
+The board reboots automatically after upload. The old firmware is **not**
 rolled back automatically if the new image is broken — keep the USB cable
 as a fallback for recovery.
 
-## 2. USB connection (`usb_heltec` radio type)
+### Adding a new board
+
+Drop a new file under `firmware/include/boards/<my_board>.h` modelled on
+`heltec_v3.h`, add `-DBOARD_MY_BOARD` to a new env in `platformio.ini`,
+and a matching `#elif defined(BOARD_MY_BOARD)` arm in `board_config.h`.
+The rest of the firmware reads everything through `BOARD.*` and doesn't
+need to change.
+
+## 2. USB connection (`pymc_usb` radio type)
 
 ```bash
 ls -la /dev/ttyACM* /dev/ttyUSB*
@@ -73,7 +103,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 (VID/PID `10c4:ea60` matches the CP2102 on the Heltec V3; for native USB-CDC
 use `303a:1001`.)
 
-## 3. WiFi configuration (optional, for `tcp_heltec` mode)
+## 3. WiFi configuration (optional, for `pymc_tcp` mode)
 
 On first boot the Heltec starts an open access point `LoRa-Modem-XXXX`.
 Connect a phone/laptop to that AP, open `http://192.168.4.1`, pick your
@@ -137,9 +167,10 @@ It will:
 3. Verify both modules import cleanly.
 4. Locate `pymc_repeater/config.py` (tries the installed package first,
    then `/opt/pymc_repeater`, then `/opt/companion/pyMC_Repeater`).
-5. Patch `create_radio()` / `get_radio_for_board()` with the `usb_heltec`
-   and `tcp_heltec` branches — **only if missing** (guard-string checked,
-   so re-running is safe).
+5. Patch `create_radio()` / `get_radio_for_board()` with the `pymc_usb`
+   and `pymc_tcp` branches — **only if missing** (guard-string checked,
+   so re-running is safe). Each branch also accepts the legacy
+   `usb_heltec` / `tcp_heltec` aliases for backward compatibility.
 6. Back up the original `config.py` with a timestamped `.bak.` suffix
    before any edit.
 7. Print the next steps (flash firmware, configure `/etc/pymc_repeater/config.yaml`,
@@ -154,7 +185,7 @@ Re-run the script after every `pip install --upgrade pymc_core` or
 If you prefer to apply changes by hand (or to adapt them to a non-standard
 install layout), use sections 5a / 5b below.
 
-### 5a. USB mode (`radio_type: usb_heltec`)
+### 5a. USB mode (`radio_type: pymc_usb`)
 
 Copy the driver:
 
@@ -182,11 +213,12 @@ Modify `pymc_core/examples/common.py::create_radio()` — reference template
 in `patches/common.py`:
 
 ```python
-if radio_type == "usb_heltec":
+if radio_type in ("pymc_usb", "usb_heltec"):
     from pymc_core.hardware.usb_radio import USBLoRaRadio
+    usb_cfg = config.get("pymc_usb") or config.get("usb_heltec") or {}
     return USBLoRaRadio(
-        port=config["usb_heltec"]["port"],
-        baudrate=config["usb_heltec"].get("baudrate", 921600),
+        port=usb_cfg["port"],
+        baudrate=usb_cfg.get("baudrate", 921600),
         frequency=config["radio"]["frequency"],
         bandwidth=config["radio"]["bandwidth"],
         spreading_factor=config["radio"]["spreading_factor"],
@@ -197,7 +229,7 @@ if radio_type == "usb_heltec":
     )
 ```
 
-### 5b. WiFi/TCP mode (`radio_type: tcp_heltec`) — no cable
+### 5b. WiFi/TCP mode (`radio_type: pymc_tcp`) — no cable
 
 `TCPLoRaRadio` is **not** part of upstream `pymc_core`. Copy it the same way
 you did `usb_radio.py`:
@@ -224,9 +256,9 @@ if _TCP_AVAILABLE:
 And a matching branch in `pymc_core/examples/common.py::create_radio()`:
 
 ```python
-if radio_type == "tcp_heltec":
+if radio_type in ("pymc_tcp", "tcp_heltec"):
     from pymc_core.hardware.tcp_radio import TCPLoRaRadio
-    tcp = config["tcp_heltec"]
+    tcp = config.get("pymc_tcp") or config.get("tcp_heltec") or {}
     return TCPLoRaRadio(
         host=tcp["host"],
         port=int(tcp.get("port", 5055)),
@@ -247,7 +279,7 @@ if radio_type == "tcp_heltec":
 Example `/etc/pymc_repeater/config.yaml`:
 
 ```yaml
-radio_type: tcp_heltec
+radio_type: pymc_tcp
 
 radio:
   frequency: 869618000       # MeshCore EU Narrow / Switzerland
@@ -261,16 +293,16 @@ radio:
     peak_threshold: 23
     min_threshold: 11
 
-tcp_heltec:
-  host: 192.168.1.50          # Heltec LAN IP
+pymc_tcp:
+  host: 192.168.1.50          # modem LAN IP or mDNS name
   port: 5055
   token: ""                  # empty = open LAN
   connect_timeout: 5.0
   lbt_enabled: true
   lbt_max_attempts: 5
 
-# Alternative — when radio_type is usb_heltec:
-# usb_heltec:
+# Alternative — when radio_type is pymc_usb:
+# pymc_usb:
 #   port: /dev/ttyUSB0
 #   baudrate: 921600
 #   lbt_enabled: true
@@ -315,17 +347,18 @@ Retransmitted packet (X bytes, Yms airtime)   ← mesh forwarding is live
 ## 8. Docker deployment (alternative to native install)
 
 The image at `docker/Dockerfile` bundles pymc_repeater + pymc_core,
-runs `scripts/install.sh` at build time so all the patches in §5 (drivers,
-config.py branches, web setup wizard, Heltec config panel, JWT exemption,
-sticky link) land in the same place as a native install. Default transport
-is `tcp_heltec` — the modem lives on the LAN and the container has no need
-for `--device` or dialout group membership.
+runs `scripts/install.sh` at build time so all the patches in §5
+(drivers, config.py branches, web setup wizard, pymc_tcp config panel,
+JWT exemption, sticky link) land in the same place as a native install.
+Default transport is `pymc_tcp` — the modem lives on the LAN and the
+container has no need for `--device` or dialout group membership.
 
 ### Build and run
 
 ```bash
-# Edit HELTEC_HOST in docker-compose.yml first (or leave the placeholder
-# and finish setup from the web UI's Heltec config panel afterwards).
+# Set PYMC_TCP_HOST in a .env file next to docker-compose.yml first
+# (or leave the placeholder and finish setup from the web UI's
+# "pymc_tcp config" panel afterwards).
 docker compose up -d --build
 docker compose logs -f
 ```
@@ -352,24 +385,28 @@ The entrypoint applies env-var overrides on every container start —
 change a value in `docker-compose.yml` and `docker compose up -d` to
 re-stamp the running config.
 
-| Variable                 | Default       | Notes                                     |
-|--------------------------|---------------|-------------------------------------------|
-| `RADIO_TYPE`             | `tcp_heltec`  | `tcp_heltec` or `usb_heltec`              |
-| `HELTEC_HOST`            | `192.168.1.50`| Modem LAN IP or `heltec-XXXXXX.local`     |
-| `HELTEC_PORT`            | `5055`        | Firmware TCP listener                     |
-| `HELTEC_TOKEN`           | *(empty)*     | Match the firmware NVS auth token         |
-| `HELTEC_CONNECT_TIMEOUT` | `5.0`         | Seconds — raise on slow Wi-Fi             |
-| `SERIAL_PORT`            | `/dev/ttyUSB0`| Used when `RADIO_TYPE=usb_heltec`         |
-| `BAUDRATE`               | `921600`      | USB-CDC baudrate (must match firmware)    |
-| `NODE_NAME`              | `pyMC_USB_RPT`| Repeater node name in the mesh            |
-| `ADMIN_PASSWORD`         | `admin123`    | Web UI admin — change before exposing     |
-| `FREQUENCY`              | `869618000`   | Hz                                        |
-| `TX_POWER`               | `22`          | dBm                                       |
-| `BANDWIDTH`              | `62500`       | Hz                                        |
-| `SPREADING_FACTOR`       | `8`           |                                           |
-| `CODING_RATE`            | `8`           | 4/8                                       |
-| `SYNC_WORD`              | `18`          | `0x12` (private)                          |
-| `PREAMBLE_LENGTH`        | `16`          | symbols                                   |
+| Variable                  | Default       | Notes                                      |
+|---------------------------|---------------|--------------------------------------------|
+| `RADIO_TYPE`              | `pymc_tcp`    | `pymc_tcp` or `pymc_usb`                   |
+| `PYMC_TCP_HOST`           | `192.168.1.50`| Modem LAN IP or `ikoka-XXXXXX.local` etc.  |
+| `PYMC_TCP_PORT`           | `5055`        | Firmware TCP listener                      |
+| `PYMC_TCP_TOKEN`          | *(empty)*     | Match the firmware NVS auth token          |
+| `PYMC_TCP_CONNECT_TIMEOUT`| `5.0`         | Seconds — raise on slow Wi-Fi              |
+| `SERIAL_PORT`             | `/dev/ttyUSB0`| Used when `RADIO_TYPE=pymc_usb`            |
+| `BAUDRATE`                | `921600`      | USB-CDC baudrate (must match firmware)     |
+| `NODE_NAME`               | `pyMC_USB_RPT`| Repeater node name in the mesh             |
+| `ADMIN_PASSWORD`          | `admin123`    | Web UI admin — change before exposing      |
+| `FREQUENCY`               | `869618000`   | Hz                                         |
+| `TX_POWER`                | `22`          | dBm                                        |
+| `BANDWIDTH`               | `62500`       | Hz                                         |
+| `SPREADING_FACTOR`        | `8`           |                                            |
+| `CODING_RATE`             | `8`           | 4/8                                        |
+| `SYNC_WORD`               | `18`          | `0x12` (private)                           |
+| `PREAMBLE_LENGTH`         | `16`          | symbols                                    |
+
+The legacy `HELTEC_HOST` / `HELTEC_PORT` / `HELTEC_TOKEN` /
+`HELTEC_CONNECT_TIMEOUT` env vars are still honoured as fallbacks so
+pre-rename `.env` files keep working without edits.
 
 ### USB mode in containers
 
@@ -379,8 +416,8 @@ USB-CDC requires passing the device through and matching the dialout group:
 docker run -d --name repeater \
   -p 8000:8000 \
   --device=/dev/ttyUSB0:/dev/ttyUSB0 \
-  -e RADIO_TYPE=usb_heltec -e SERIAL_PORT=/dev/ttyUSB0 \
-  pymc-usb-repeater:latest
+  -e RADIO_TYPE=pymc_usb -e SERIAL_PORT=/dev/ttyUSB0 \
+  itkeny/pymc-usb-repeater:latest
 ```
 
 Or in `docker-compose.yml`, uncomment both `SERIAL_PORT` and the
@@ -388,10 +425,10 @@ Or in `docker-compose.yml`, uncomment both `SERIAL_PORT` and the
 
 ### Deferred-connect
 
-If `HELTEC_HOST` stays at the placeholder (or is left unset), the
+If `PYMC_TCP_HOST` stays at the placeholder (or is left unset), the
 container does **not** abort. `TCPLoRaRadio` enters deferred-connect
 mode and the entrypoint logs `[WARN] Modem not reachable yet` —
-finish provisioning by clicking **Heltec config** in the web UI's
+finish provisioning by clicking **pymc_tcp config** in the web UI's
 bottom-right corner and entering the real host. The driver reconnects
 on the fly with no service restart.
 

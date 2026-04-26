@@ -5,7 +5,8 @@
 #
 # Copies USBLoRaRadio + TCPLoRaRadio drivers into the installed
 # pymc_core, then patches pymc_repeater/config.py to understand
-# the `usb_heltec` and `tcp_heltec` radio_type values.
+# the `pymc_usb` and `pymc_tcp` radio_type values (the legacy
+# `usb_heltec` / `tcp_heltec` names are still accepted as aliases).
 #
 # Idempotent — safe to re-run after every pymc_core / pymc_repeater
 # upgrade. Existing radio_type branches are detected by guard strings;
@@ -111,15 +112,15 @@ done
 
 if [ -z "$RPT_CONFIG" ]; then
     echo -e "${YELLOW}  WARNING: pymc_repeater config.py not found — skipping patch${NC}"
-    echo "  You'll need to manually add usb_heltec and tcp_heltec support"
+    echo "  You'll need to manually add pymc_usb and pymc_tcp support"
 else
     # Make a timestamped backup once if we're going to touch the file
-    if ! grep -q "usb_heltec" "$RPT_CONFIG" || ! grep -q "tcp_heltec" "$RPT_CONFIG"; then
+    if ! grep -q "pymc_usb" "$RPT_CONFIG" || ! grep -q "pymc_tcp" "$RPT_CONFIG"; then
         cp "$RPT_CONFIG" "${RPT_CONFIG}.bak.$(date +%Y%m%d_%H%M%S)"
         echo "  Backed up: ${RPT_CONFIG}.bak.*"
     fi
 
-    # Patch in one Python pass: adds usb_heltec and/or tcp_heltec blocks if missing.
+    # Patch in one Python pass: adds pymc_usb and/or pymc_tcp blocks if missing.
     RPT_CONFIG="$RPT_CONFIG" "$PYMC_PYTHON" <<'PATCH_EOF'
 import os, re, sys
 
@@ -127,15 +128,18 @@ config_path = os.environ["RPT_CONFIG"]
 with open(config_path, "r") as f:
     content = f.read()
 
+# Each branch handles BOTH the new pymc_* names and the legacy
+# usb_heltec / tcp_heltec aliases so existing config.yaml files keep
+# loading after upgrade.
 USB_BLOCK = '''
-    elif radio_type == "usb_heltec":
+    elif radio_type in ("pymc_usb", "usb_heltec"):
         from pymc_core.hardware.usb_radio import USBLoRaRadio
 
         radio_config = board_config.get("radio")
         if not radio_config:
             raise ValueError("Missing 'radio' section in configuration file")
 
-        usb_config = board_config.get("usb_heltec", {})
+        usb_config = board_config.get("pymc_usb") or board_config.get("usb_heltec") or {}
 
         radio = USBLoRaRadio(
             port=usb_config.get("port", "/dev/ttyUSB0"),
@@ -154,23 +158,23 @@ USB_BLOCK = '''
         try:
             radio.begin()
         except Exception as e:
-            raise RuntimeError(f"Failed to initialize USB Heltec radio: {e}") from e
+            raise RuntimeError(f"Failed to initialize pymc_usb radio: {e}") from e
 
         return radio
 
 '''
 
 TCP_BLOCK = '''
-    elif radio_type == "tcp_heltec":
+    elif radio_type in ("pymc_tcp", "tcp_heltec"):
         from pymc_core.hardware.tcp_radio import TCPLoRaRadio
 
         radio_config = board_config.get("radio")
         if not radio_config:
             raise ValueError("Missing 'radio' section in configuration file")
 
-        tcp_config = board_config.get("tcp_heltec", {})
+        tcp_config = board_config.get("pymc_tcp") or board_config.get("tcp_heltec") or {}
         if not tcp_config.get("host"):
-            raise ValueError("tcp_heltec.host is required for radio_type: tcp_heltec")
+            raise ValueError("pymc_tcp.host is required for radio_type: pymc_tcp")
 
         radio = TCPLoRaRadio(
             host=tcp_config["host"],
@@ -191,7 +195,7 @@ TCP_BLOCK = '''
         try:
             radio.begin()
         except Exception as e:
-            raise RuntimeError(f"Failed to initialize TCP Heltec radio: {e}") from e
+            raise RuntimeError(f"Failed to initialize pymc_tcp radio: {e}") from e
 
         return radio
 
@@ -210,25 +214,31 @@ def insert_block(text, block, guard):
     return text[:pos] + block + text[pos:], True
 
 changed = False
-content, inserted = insert_block(content, USB_BLOCK, 'radio_type == "usb_heltec"')
+# Guard string is the literal `elif` clause we insert — present only
+# in the v2 branches that recognise pymc_usb/pymc_tcp. The v1 guard
+# `'radio_type == "usb_heltec"'` would NOT match this string, so an
+# install.sh re-run on a previously-patched (v1) file inserts the v2
+# branch alongside the older one. Both keep working.
+content, inserted = insert_block(content, USB_BLOCK, 'radio_type in ("pymc_usb", "usb_heltec")')
 if inserted:
     changed = True
-    print("  + inserted usb_heltec block")
+    print("  + inserted pymc_usb branch (with usb_heltec alias)")
 
-content, inserted = insert_block(content, TCP_BLOCK, 'radio_type == "tcp_heltec"')
+content, inserted = insert_block(content, TCP_BLOCK, 'radio_type in ("pymc_tcp", "tcp_heltec")')
 if inserted:
     changed = True
-    print("  + inserted tcp_heltec block")
+    print("  + inserted pymc_tcp branch (with tcp_heltec alias)")
 
 if changed:
     # Extend the error message to list the new radio types.
+    NEW_LIST = "pymc_usb, pymc_tcp"
     for old, new in [
-        ('Supported: sx1262"',                                  'Supported: sx1262, usb_heltec, tcp_heltec"'),
-        ('Supported: sx1262, usb_heltec"',                      'Supported: sx1262, usb_heltec, tcp_heltec"'),
+        ('Supported: sx1262"',                                  f'Supported: sx1262, {NEW_LIST}"'),
+        ('Supported: sx1262, usb_heltec, tcp_heltec"',          f'Supported: sx1262, {NEW_LIST}"'),
         ('Supported: sx1262, sx1262_ch341, kiss (or kiss-modem)"',
-         'Supported: sx1262, sx1262_ch341, kiss (or kiss-modem), usb_heltec, tcp_heltec"'),
-        ('Supported: sx1262, sx1262_ch341, kiss (or kiss-modem), usb_heltec"',
-         'Supported: sx1262, sx1262_ch341, kiss (or kiss-modem), usb_heltec, tcp_heltec"'),
+         f'Supported: sx1262, sx1262_ch341, kiss (or kiss-modem), {NEW_LIST}"'),
+        ('Supported: sx1262, sx1262_ch341, kiss (or kiss-modem), usb_heltec, tcp_heltec"',
+         f'Supported: sx1262, sx1262_ch341, kiss (or kiss-modem), {NEW_LIST}"'),
     ]:
         content = content.replace(old, new)
     with open(config_path, "w") as f:
@@ -238,7 +248,7 @@ else:
     print("  Already patched — nothing to change")
 PATCH_EOF
 
-    echo -e "  ${GREEN}config.py ready for usb_heltec + tcp_heltec${NC}"
+    echo -e "  ${GREEN}config.py ready for pymc_usb + pymc_tcp${NC}"
 fi
 
 # ─── 4. Install example config ───────────────────────────────
@@ -256,7 +266,8 @@ current_radio_type() {
 
 RT_NOW=$(current_radio_type)
 
-if [ "$RT_NOW" = "usb_heltec" ] || [ "$RT_NOW" = "tcp_heltec" ]; then
+if [ "$RT_NOW" = "pymc_usb" ] || [ "$RT_NOW" = "pymc_tcp" ] \
+    || [ "$RT_NOW" = "usb_heltec" ] || [ "$RT_NOW" = "tcp_heltec" ]; then
     echo -e "  ${GREEN}Config already uses $RT_NOW — leaving as-is${NC}"
 else
     echo "  Current radio_type: ${RT_NOW:-<missing>}  →  switching to a working pymc_usb config"
@@ -271,35 +282,37 @@ else
     # Replace with our example baseline
     cp "$REPO_DIR/config.yaml.example" "$CONFIG_PATH"
 
-    # Picking the radio: HELTEC_HOST env-var first, then USB auto-detect,
-    # then a tcp_heltec placeholder. TCPLoRaRadio supports deferred-connect
-    # mode (since v0.5.10), so the repeater service starts even when the
-    # Heltec host is just a placeholder — the user fills in the real host
-    # via the web setup wizard, and the radio reconnects on the fly.
+    # Picking the radio: PYMC_TCP_HOST env-var first (HELTEC_HOST kept as
+    # legacy alias), then USB auto-detect, then a pymc_tcp placeholder.
+    # TCPLoRaRadio supports deferred-connect mode (since v0.5.10), so the
+    # repeater service starts even when the host is just a placeholder —
+    # the user fills in the real host via the web setup wizard and the
+    # radio reconnects on the fly.
     USB_DEV=$(ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null | head -1)
+    TCP_HOST="${PYMC_TCP_HOST:-$HELTEC_HOST}"
 
-    if [ -n "$HELTEC_HOST" ]; then
-        sed -i "s|^radio_type: usb_heltec$|radio_type: tcp_heltec|" "$CONFIG_PATH"
-        sed -i "s|host: 192.168.1.50|host: $HELTEC_HOST|" "$CONFIG_PATH"
-        echo -e "  ${GREEN}HELTEC_HOST=$HELTEC_HOST → radio_type=tcp_heltec${NC}"
+    if [ -n "$TCP_HOST" ]; then
+        sed -i "s|^radio_type: pymc_usb$|radio_type: pymc_tcp|" "$CONFIG_PATH"
+        sed -i "s|host: 192.168.1.50|host: $TCP_HOST|" "$CONFIG_PATH"
+        echo -e "  ${GREEN}PYMC_TCP_HOST=$TCP_HOST → radio_type=pymc_tcp${NC}"
 
     elif [ -n "$USB_DEV" ]; then
         sed -i "s|^  port: /dev/ttyUSB0$|  port: $USB_DEV|" "$CONFIG_PATH"
         echo -e "  ${GREEN}Detected USB serial device: $USB_DEV${NC}"
-        echo -e "  ${GREEN}→ radio_type=usb_heltec, port=$USB_DEV${NC}"
+        echo -e "  ${GREEN}→ radio_type=pymc_usb, port=$USB_DEV${NC}"
         echo "    (assumes the device runs our LoRa modem firmware —"
         echo "     flash firmware/firmware.bin first if you haven't already)"
 
     else
         # No USB and no env-var — leave placeholder. Service will start in
         # deferred-connect mode; user finishes config through /setup wizard
-        # or by re-running with HELTEC_HOST=…
-        sed -i "s|^radio_type: usb_heltec$|radio_type: tcp_heltec|" "$CONFIG_PATH"
-        echo -e "  ${YELLOW}No USB device and HELTEC_HOST not set${NC}"
-        echo -e "  ${GREEN}→ radio_type=tcp_heltec, placeholder host=heltec-abcdef.local${NC}"
+        # or by re-running with PYMC_TCP_HOST=…
+        sed -i "s|^radio_type: pymc_usb$|radio_type: pymc_tcp|" "$CONFIG_PATH"
+        echo -e "  ${YELLOW}No USB device and PYMC_TCP_HOST not set${NC}"
+        echo -e "  ${GREEN}→ radio_type=pymc_tcp, placeholder host=ikoka-abcdef.local${NC}"
         echo "    Service will start in deferred-connect mode — open the web UI"
-        echo "    and use /setup to point tcp_heltec.host at your real Heltec,"
-        echo "    or re-run: sudo HELTEC_HOST=<ip-or-mdns> $0"
+        echo "    and use /setup to point pymc_tcp.host at your real modem,"
+        echo "    or re-run: sudo PYMC_TCP_HOST=<ip-or-mdns> $0"
     fi
 
     # Force first-run setup wizard: keep node_name + admin_password at
@@ -330,7 +343,7 @@ fi
 
 # ─── 5. Patch web setup wizard (radio-settings.json + api_endpoints.py) ──
 echo ""
-echo -e "${YELLOW}[5/7] Wiring usb_heltec / tcp_heltec into the web setup wizard...${NC}"
+echo -e "${YELLOW}[5/7] Wiring pymc_usb / pymc_tcp into the web setup wizard...${NC}"
 
 # 5a. radio-settings.json — merge our two entries (idempotent)
 RADIO_SETTINGS=""
@@ -382,7 +395,7 @@ JSON_PATCH_EOF
     echo -e "  ${GREEN}radio-settings.json ready${NC}"
 fi
 
-# 5b. setup_wizard handler — insert usb_heltec / tcp_heltec branches before the SX1262 block
+# 5b. setup_wizard handler — insert pymc_usb / pymc_tcp branches before the SX1262 block
 WIZARD=""
 for path in \
     "$("$PYMC_PYTHON" -c 'import repeater; print(repeater.__path__[0])' 2>/dev/null)/web/api_endpoints.py" \
@@ -401,17 +414,21 @@ else
 import os, re, sys, datetime, shutil
 
 target = os.environ["WIZARD"]
-GUARD = "# pymc_usb wizard branches"
+# v2 guard — bumped on the rename so an in-place re-run on a previously
+# patched (v1) api_endpoints.py inserts the new branch alongside the old
+# one. Both keep working; new install.sh runs against fresh source land
+# in a single clean v2 block.
+GUARD = "# pymc_usb wizard branches v2"
 
 with open(target) as f:
     content = f.read()
 
 if GUARD in content:
-    print("  setup_wizard already patched — nothing to do")
+    print("  setup_wizard already patched (v2) — nothing to do")
     sys.exit(0)
 
 # Anchor: the line that starts the SX1262/CH341 fallback block.
-# We insert usb_heltec / tcp_heltec branches *before* it and convert it
+# We insert pymc_usb / pymc_tcp branches *before* it and convert it
 # into an `else:` of an if/elif chain.
 ANCHOR = (
     "                if \"radio_type\" in hw_config:\n"
@@ -422,39 +439,50 @@ ANCHOR = (
 REPLACE = (
     "                config_yaml[\"radio_type\"] = hw_config.get(\"radio_type\", \"sx1262\")\n"
     "\n"
-    "                " + GUARD + " — usb_heltec / tcp_heltec\n"
-    "                if config_yaml[\"radio_type\"] == \"usb_heltec\":\n"
-    "                    config_yaml.setdefault(\"usb_heltec\", {})\n"
-    "                    config_yaml[\"usb_heltec\"].setdefault(\"port\", \"/dev/ttyUSB0\")\n"
-    "                    config_yaml[\"usb_heltec\"].setdefault(\"baudrate\", 921600)\n"
-    "                    config_yaml[\"usb_heltec\"].setdefault(\"lbt_enabled\", True)\n"
-    "                    config_yaml[\"usb_heltec\"].setdefault(\"lbt_max_attempts\", 5)\n"
+    "                " + GUARD + " — pymc_usb / pymc_tcp (legacy aliases accepted)\n"
+    "                _RT = config_yaml[\"radio_type\"]\n"
+    "                if _RT in (\"pymc_usb\", \"usb_heltec\"):\n"
+    "                    config_yaml[\"radio_type\"] = \"pymc_usb\"\n"
+    "                    config_yaml.setdefault(\"pymc_usb\", {})\n"
+    "                    config_yaml[\"pymc_usb\"].setdefault(\"port\", \"/dev/ttyUSB0\")\n"
+    "                    config_yaml[\"pymc_usb\"].setdefault(\"baudrate\", 921600)\n"
+    "                    config_yaml[\"pymc_usb\"].setdefault(\"lbt_enabled\", True)\n"
+    "                    config_yaml[\"pymc_usb\"].setdefault(\"lbt_max_attempts\", 5)\n"
     "                    if \"tx_power\" in hw_config:\n"
     "                        config_yaml[\"radio\"][\"tx_power\"] = hw_config.get(\"tx_power\", 22)\n"
     "                    if \"preamble_length\" in hw_config:\n"
     "                        config_yaml[\"radio\"][\"preamble_length\"] = hw_config.get(\"preamble_length\", 16)\n"
-    "                elif config_yaml[\"radio_type\"] == \"tcp_heltec\":\n"
-    "                    config_yaml.setdefault(\"tcp_heltec\", {})\n"
-    "                    # Values from the injected /setup panel (heltec_setup_panel.js)\n"
-    "                    # take priority over the placeholder defaults below.\n"
-    "                    if data.get(\"tcp_heltec_host\"):\n"
-    "                        config_yaml[\"tcp_heltec\"][\"host\"] = str(data[\"tcp_heltec_host\"]).strip()\n"
+    "                elif _RT in (\"pymc_tcp\", \"tcp_heltec\"):\n"
+    "                    config_yaml[\"radio_type\"] = \"pymc_tcp\"\n"
+    "                    # Migrate any pre-existing legacy section name first\n"
+    "                    if \"tcp_heltec\" in config_yaml and \"pymc_tcp\" not in config_yaml:\n"
+    "                        config_yaml[\"pymc_tcp\"] = config_yaml.pop(\"tcp_heltec\")\n"
+    "                    config_yaml.setdefault(\"pymc_tcp\", {})\n"
+    "                    # Values from the injected /setup panel (pymc_tcp_setup_panel.js)\n"
+    "                    # take priority over the placeholder defaults below. Legacy\n"
+    "                    # field names tcp_heltec_* are also accepted.\n"
+    "                    _host = data.get(\"pymc_tcp_host\") or data.get(\"tcp_heltec_host\")\n"
+    "                    if _host:\n"
+    "                        config_yaml[\"pymc_tcp\"][\"host\"] = str(_host).strip()\n"
     "                    else:\n"
-    "                        config_yaml[\"tcp_heltec\"].setdefault(\"host\", \"heltec-abcdef.local\")\n"
-    "                    if data.get(\"tcp_heltec_port\"):\n"
+    "                        config_yaml[\"pymc_tcp\"].setdefault(\"host\", \"ikoka-abcdef.local\")\n"
+    "                    _port = data.get(\"pymc_tcp_port\") or data.get(\"tcp_heltec_port\")\n"
+    "                    if _port:\n"
     "                        try:\n"
-    "                            config_yaml[\"tcp_heltec\"][\"port\"] = int(data[\"tcp_heltec_port\"])\n"
+    "                            config_yaml[\"pymc_tcp\"][\"port\"] = int(_port)\n"
     "                        except (TypeError, ValueError):\n"
-    "                            config_yaml[\"tcp_heltec\"].setdefault(\"port\", 5055)\n"
+    "                            config_yaml[\"pymc_tcp\"].setdefault(\"port\", 5055)\n"
     "                    else:\n"
-    "                        config_yaml[\"tcp_heltec\"].setdefault(\"port\", 5055)\n"
-    "                    if \"tcp_heltec_token\" in data:\n"
-    "                        config_yaml[\"tcp_heltec\"][\"token\"] = str(data.get(\"tcp_heltec_token\") or \"\")\n"
+    "                        config_yaml[\"pymc_tcp\"].setdefault(\"port\", 5055)\n"
+    "                    if \"pymc_tcp_token\" in data:\n"
+    "                        config_yaml[\"pymc_tcp\"][\"token\"] = str(data.get(\"pymc_tcp_token\") or \"\")\n"
+    "                    elif \"tcp_heltec_token\" in data:\n"
+    "                        config_yaml[\"pymc_tcp\"][\"token\"] = str(data.get(\"tcp_heltec_token\") or \"\")\n"
     "                    else:\n"
-    "                        config_yaml[\"tcp_heltec\"].setdefault(\"token\", \"\")\n"
-    "                    config_yaml[\"tcp_heltec\"].setdefault(\"connect_timeout\", 5.0)\n"
-    "                    config_yaml[\"tcp_heltec\"].setdefault(\"lbt_enabled\", True)\n"
-    "                    config_yaml[\"tcp_heltec\"].setdefault(\"lbt_max_attempts\", 5)\n"
+    "                        config_yaml[\"pymc_tcp\"].setdefault(\"token\", \"\")\n"
+    "                    config_yaml[\"pymc_tcp\"].setdefault(\"connect_timeout\", 5.0)\n"
+    "                    config_yaml[\"pymc_tcp\"].setdefault(\"lbt_enabled\", True)\n"
+    "                    config_yaml[\"pymc_tcp\"].setdefault(\"lbt_max_attempts\", 5)\n"
     "                    if \"tx_power\" in hw_config:\n"
     "                        config_yaml[\"radio\"][\"tx_power\"] = hw_config.get(\"tx_power\", 22)\n"
     "                    if \"preamble_length\" in hw_config:\n"
@@ -477,32 +505,32 @@ print(f"  Backed up: {backup}")
 
 with open(target, "w") as f:
     f.write(new_content)
-print(f"  Patched setup_wizard: usb_heltec / tcp_heltec branches inserted")
+print(f"  Patched setup_wizard: pymc_usb / pymc_tcp branches inserted (v2)")
 WIZ_PATCH_EOF
     echo -e "  ${GREEN}setup_wizard ready${NC}"
 fi
 
-# 5c. Heltec TCP configuration panel (HTML + 3 cherrypy endpoints).
+# 5c. pymc_tcp configuration panel (HTML + 3 cherrypy endpoints).
 # Idempotent: HTML is overwritten every run, endpoints are guarded by a
 # marker comment.
-HELTEC_PANEL_DST=""
+PANEL_DST=""
 if [ -n "$WIZARD" ]; then
-    HELTEC_PANEL_DST="$(dirname "$WIZARD")/html/heltec_panel.html"
-    cp "$REPO_DIR/patches/heltec_panel.html" "$HELTEC_PANEL_DST"
-    chmod 644 "$HELTEC_PANEL_DST"
-    echo -e "  ${GREEN}Installed: $HELTEC_PANEL_DST${NC}"
+    PANEL_DST="$(dirname "$WIZARD")/html/pymc_tcp_panel.html"
+    cp "$REPO_DIR/patches/pymc_tcp_panel.html" "$PANEL_DST"
+    chmod 644 "$PANEL_DST"
+    echo -e "  ${GREEN}Installed: $PANEL_DST${NC}"
 
     WIZARD="$WIZARD" REPO_DIR="$REPO_DIR" "$PYMC_PYTHON" <<'PANEL_PATCH_EOF'
 import os, datetime, shutil, sys
 
 target = os.environ["WIZARD"]
-endpoints_src = os.path.join(os.environ["REPO_DIR"], "patches", "heltec_endpoints.py")
-GUARD = "# pymc_usb — Heltec TCP panel endpoints"
+endpoints_src = os.path.join(os.environ["REPO_DIR"], "patches", "pymc_tcp_endpoints.py")
+GUARD = "# pymc_usb — pymc_tcp panel endpoints"
 
 with open(target) as f:
     content = f.read()
 if GUARD in content:
-    print("  Heltec panel endpoints already present — skipping")
+    print("  pymc_tcp panel endpoints already present — skipping")
     sys.exit(0)
 with open(endpoints_src) as f:
     block = f.read()
@@ -539,7 +567,7 @@ print(f"  Backed up: {backup}")
 new_content = content[:insert_at] + "\n" + block + content[insert_at:]
 with open(target, "w") as f:
     f.write(new_content)
-print(f"  Heltec panel endpoints inserted in {target}")
+print(f"  pymc_tcp panel endpoints inserted in {target}")
 PANEL_PATCH_EOF
 fi
 
@@ -548,8 +576,8 @@ fi
 # of pyMC_Repeater's CherryPy server. Repeater reads `web.web_path`
 # from config.yaml and serves whichever directory is pointed there;
 # the default is repeater's own Vue bundle, but we point it at the
-# console bundle for a much nicer UI. The Heltec endpoints we expose
-# (/api/heltec etc.) keep working unchanged because they are CherryPy
+# console bundle for a much nicer UI. The pymc_tcp endpoints we expose
+# (/api/pymc_tcp etc.) keep working unchanged because they are CherryPy
 # routes, independent of which static bundle is being served.
 #
 # Skip this step entirely with PYMC_NO_CONSOLE=1 if you prefer the
@@ -614,7 +642,7 @@ WEBPATH_PATCH_EOF
     fi
 fi
 
-# 5d-pre. Inject a sticky "Heltec config" link into the served SPA's
+# 5d-pre. Inject a sticky "pymc_tcp config" link into the served SPA's
 # index.html. We patch whichever bundle is actually serving — defaults
 # to /opt/pymc_console/web/html (set above), falls back to repeater's
 # own Vue bundle if the console step was skipped or failed.
@@ -635,7 +663,11 @@ import os, datetime, shutil, sys
 
 target = os.environ["INDEX_HTML"]
 repo_dir = os.environ["REPO_DIR"]
-GUARD = "pymc_usb-heltec-link"
+# v2 ids — bumped when the rename to pymc_tcp landed. The legacy
+# `pymc_usb-heltec-link` element on already-patched pages is left in
+# place so existing bookmarks keep working; we just add the new one
+# alongside.
+GUARD = "pymc_usb-pymc_tcp-link"
 SETUP_GUARD = "pymc_usb-tcp-setup-panel"
 
 with open(target) as f:
@@ -659,17 +691,17 @@ to_prepend = ""
 if GUARD not in content:
     to_prepend += (
         '    <!-- ' + GUARD + ': stable across pymc_repeater upgrades, re-injected by install.sh -->\n'
-        '    <a id="' + GUARD + '" href="/api/heltec" target="_blank" rel="noopener"\n'
+        '    <a id="' + GUARD + '" href="/api/pymc_tcp" target="_blank" rel="noopener"\n'
         '       style="position:fixed;bottom:14px;right:14px;z-index:99999;'
         'background:#2e7d57;color:#fff;padding:9px 14px;border-radius:6px;'
         'font:13px/1.2 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;'
         'text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.25);'
         'border:1px solid rgba(255,255,255,.12)">\n'
-        '      Heltec config\n'
+        '      pymc_tcp config\n'
         '    </a>\n'
     )
 
-setup_js_path = os.path.join(repo_dir, "patches", "heltec_setup_panel.js")
+setup_js_path = os.path.join(repo_dir, "patches", "pymc_tcp_setup_panel.js")
 if SETUP_GUARD not in content and os.path.exists(setup_js_path):
     with open(setup_js_path) as jf:
         js_body = jf.read()
@@ -707,7 +739,10 @@ if [ -n "$HTTP_SERVER" ] && [ -f "$HTTP_SERVER" ]; then
 import os, datetime, shutil, sys
 
 target = os.environ["HTTP_SERVER"]
-GUARD = "# pymc_usb — Heltec panel auth exemptions"
+# v2 guard — bumped on rename. Re-runs on a previously-patched
+# (v1 / Heltec-named) http_server.py append the new exemptions
+# alongside the old ones; both endpoint sets remain JWT-free.
+GUARD = "# pymc_usb — pymc_tcp panel auth exemptions"
 
 with open(target) as f:
     content = f.read()
@@ -718,13 +753,13 @@ if GUARD in content:
 ANCHOR = '                "/favicon.ico": {\n'
 INJECT = (
     '                ' + GUARD + '\n'
-    '                "/api/heltec": {\n'
+    '                "/api/pymc_tcp": {\n'
     '                    "tools.require_auth.on": False,\n'
     '                },\n'
-    '                "/api/get_tcp_heltec_config": {\n'
+    '                "/api/get_pymc_tcp_config": {\n'
     '                    "tools.require_auth.on": False,\n'
     '                },\n'
-    '                "/api/update_tcp_heltec_config": {\n'
+    '                "/api/update_pymc_tcp_config": {\n'
     '                    "tools.require_auth.on": False,\n'
     '                },\n'
 )
@@ -739,7 +774,7 @@ print(f"  Backed up: {backup}")
 
 with open(target, "w") as f:
     f.write(content.replace(ANCHOR, INJECT + ANCHOR, 1))
-print(f"  Exempted Heltec panel endpoints from JWT in {target}")
+print(f"  Exempted pymc_tcp panel endpoints from JWT in {target}")
 HTTP_PATCH_EOF
 fi
 
@@ -855,6 +890,6 @@ echo "                       0x10000 $REPO_DIR/firmware/firmware.bin"
 echo "    2. Connect Heltec (USB mode) or provision Wi-Fi (TCP mode — see INSTALL.md)"
 echo "    3. Test: python3 $REPO_DIR/pymc_driver/test_modem.py /dev/ttyUSB0"
 echo "    4. Configure: sudo nano /etc/pymc_repeater/config.yaml"
-echo "       (set radio_type: usb_heltec or tcp_heltec)"
+echo "       (set radio_type: pymc_usb or pymc_tcp)"
 echo "    5. Restart: sudo systemctl restart pymc-repeater"
 echo "═══════════════════════════════════════════"

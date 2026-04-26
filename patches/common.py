@@ -34,9 +34,9 @@ def create_radio(radio_type: str = "waveshare", serial_port: str = "/dev/ttyUSB0
             "uconsole"      - uConsole LoRa module (SPI)
             "meshadv-mini"  - MeshAdv Mini (SPI)
             "kiss-tnc"      - KISS TNC over serial
-            "usb_heltec"    - Heltec V3/V4 over USB-CDC (LoRa modem firmware)
-            "tcp_heltec"    - Heltec V3/V4 over WiFi/TCP (LoRa modem firmware)
-        serial_port: Serial port path (used by "kiss-tnc" and "usb_heltec")
+            "pymc_usb"      - pymc_usb firmware over USB-CDC (alias: usb_heltec)
+            "pymc_tcp"      - pymc_usb firmware over Wi-Fi/TCP (alias: tcp_heltec)
+        serial_port: Serial port path (used by "kiss-tnc" and "pymc_usb")
 
     Returns:
         Radio instance configured for the specified hardware
@@ -71,17 +71,22 @@ def create_radio(radio_type: str = "waveshare", serial_port: str = "/dev/ttyUSB0
             )
             return kiss_wrapper
 
-        # ── TCP Heltec (LoRa modem over WiFi/TCP) ────────────
-        if radio_type == "tcp_heltec":
+        # ── pymc_tcp (LoRa modem over Wi-Fi/TCP) ─────────────
+        if radio_type in ("pymc_tcp", "tcp_heltec"):
             from pymc_core.hardware.tcp_radio import TCPLoRaRadio
 
-            logger.debug("Using TCP LoRa Radio (Heltec modem over WiFi)")
+            logger.debug("Using TCP LoRa Radio (pymc_usb firmware over Wi-Fi)")
 
             tcp_config = {
-                "host": os.environ.get("HELTEC_HOST", "heltec-abcdef.local"),
-                "port": int(os.environ.get("HELTEC_PORT", 5055)),
-                "token": os.environ.get("HELTEC_TOKEN", ""),
-                "connect_timeout": float(os.environ.get("HELTEC_TIMEOUT", 5.0)),
+                "host": (os.environ.get("PYMC_TCP_HOST")
+                         or os.environ.get("HELTEC_HOST", "ikoka-abcdef.local")),
+                "port": int(os.environ.get("PYMC_TCP_PORT")
+                            or os.environ.get("HELTEC_PORT", 5055)),
+                "token": (os.environ.get("PYMC_TCP_TOKEN")
+                          or os.environ.get("HELTEC_TOKEN", "")),
+                "connect_timeout": float(
+                    os.environ.get("PYMC_TCP_CONNECT_TIMEOUT")
+                    or os.environ.get("HELTEC_TIMEOUT", 5.0)),
                 "frequency": int(os.environ.get("LORA_FREQ", 869618000)),
                 "bandwidth": int(os.environ.get("LORA_BW", 62500)),
                 "spreading_factor": int(os.environ.get("LORA_SF", 8)),
@@ -95,17 +100,17 @@ def create_radio(radio_type: str = "waveshare", serial_port: str = "/dev/ttyUSB0
 
             radio = TCPLoRaRadio(**tcp_config)
             logger.info(
-                f"TCP Heltec radio created at {tcp_config['host']}:{tcp_config['port']}: "
+                f"pymc_tcp radio created at {tcp_config['host']}:{tcp_config['port']}: "
                 f"{tcp_config['frequency']/1e6:.1f}MHz SF{tcp_config['spreading_factor']} "
                 f"BW{tcp_config['bandwidth']/1000:.0f}kHz {tcp_config['tx_power']}dBm"
             )
             return radio
 
-        # ── USB Heltec (LoRa modem over USB-CDC) ─────────────
-        if radio_type == "usb_heltec":
+        # ── pymc_usb (LoRa modem over USB-CDC) ───────────────
+        if radio_type in ("pymc_usb", "usb_heltec"):
             from pymc_core.hardware.usb_radio import USBLoRaRadio
 
-            logger.debug("Using USB LoRa Radio (Heltec modem)")
+            logger.debug("Using USB LoRa Radio (pymc_usb firmware)")
 
             # Default: EU/UK (Narrow), Switzerland preset
             usb_config = {
@@ -124,7 +129,7 @@ def create_radio(radio_type: str = "waveshare", serial_port: str = "/dev/ttyUSB0
 
             radio = USBLoRaRadio(**usb_config)
             logger.info(
-                f"USB Heltec radio created on {serial_port}: "
+                f"pymc_usb radio created on {serial_port}: "
                 f"{usb_config['frequency']/1e6:.1f}MHz SF{usb_config['spreading_factor']} "
                 f"BW{usb_config['bandwidth']/1000:.0f}kHz {usb_config['tx_power']}dBm"
             )
@@ -191,7 +196,7 @@ def create_radio(radio_type: str = "waveshare", serial_port: str = "/dev/ttyUSB0
         if radio_type not in configs:
             raise ValueError(
                 f"Unknown radio type: {radio_type}. "
-                f"Use 'waveshare', 'meshadv-mini', 'uconsole', 'kiss-tnc', 'usb_heltec', or 'tcp_heltec'"
+                f"Use 'waveshare', 'meshadv-mini', 'uconsole', 'kiss-tnc', 'pymc_usb', or 'pymc_tcp'"
             )
 
         radio_kwargs = configs[radio_type]
@@ -220,9 +225,9 @@ def create_mesh_node(
     Args:
         node_name: Name for the mesh node
         radio_type: Type of radio hardware ("waveshare", "uconsole", "meshadv-mini",
-                    "kiss-tnc", or "usb_heltec")
-        serial_port: Serial port for KISS TNC or USB Heltec
-                     (e.g. "/dev/ttyUSB0" for KISS, "/dev/ttyACM0" for Heltec)
+                    "kiss-tnc", "pymc_usb" or "pymc_tcp")
+        serial_port: Serial port for KISS TNC or pymc_usb
+                     (e.g. "/dev/ttyUSB0" for KISS, "/dev/ttyACM0" for the modem)
 
     Returns:
         Tuple of (MeshNode, LocalIdentity)

@@ -1,10 +1,11 @@
-# Repeater Configuration — Heltec V3 modem (USB-CDC or Wi-Fi/TCP)
+# Repeater configuration — pymc_usb / pymc_tcp modem (USB-CDC or Wi-Fi/TCP)
 #
 # Select radio driver:
-#   "sx1262"      — SPI HAT / SX1262 module directly on the Pi
-#   "usb_heltec"  — Heltec V3 over USB-CDC (cable, default port 921600)
-#   "tcp_heltec"  — Heltec V3 over Wi-Fi/TCP (firmware v0.4+, no cable)
-radio_type: usb_heltec
+#   "sx1262"   — SPI HAT / SX1262 module directly on the Pi
+#   "pymc_usb" — pymc_usb firmware over USB-CDC (cable, default 921600 baud)
+#   "pymc_tcp" — pymc_usb firmware over Wi-Fi/TCP (no cable)
+# The legacy names "usb_heltec" / "tcp_heltec" are still accepted as aliases.
+radio_type: pymc_usb
 
 repeater:
   node_name: "pyMC_USB_RPT"
@@ -41,19 +42,19 @@ radio:
   crc_enabled: true
   implicit_header: false
 
-# USB Heltec modem configuration (used when radio_type: usb_heltec)
-usb_heltec:
+# USB-CDC modem configuration (used when radio_type: pymc_usb)
+pymc_usb:
   port: /dev/ttyUSB0
   baudrate: 921600
   lbt_enabled: true
   lbt_max_attempts: 5
 
-# Wi-Fi/TCP Heltec modem configuration (used when radio_type: tcp_heltec)
-# The Heltec runs firmware v0.4+ in STA mode (configure once via its AP
-# setup portal at http://192.168.4.1). Set host to the IP assigned by your
-# router (or reserve a static lease). Leave token empty for open access
-# on the LAN, or set a matching string configured in the firmware's portal.
-tcp_heltec:
+# Wi-Fi/TCP modem configuration (used when radio_type: pymc_tcp). The
+# modem runs pymc_usb firmware in STA mode (configure once via its AP
+# setup portal at http://192.168.4.1). Set host to the IP assigned by
+# your router (or a static lease). Leave token empty for open LAN
+# access, or set a string matching the firmware's NVS auth token.
+pymc_tcp:
   host: 192.168.1.50
   port: 5055
   token: ""
@@ -61,8 +62,8 @@ tcp_heltec:
   lbt_enabled: true
   lbt_max_attempts: 5
 
-# SX1262 Hardware Configuration — not used with usb_heltec, kept for reference
-# Uncomment and set radio_type: sx1262 to switch back to SPI HAT
+# SX1262 hardware configuration — used only when radio_type: sx1262.
+# Uncomment to switch to a SPI HAT directly on the Pi.
 # sx1262:
 #   bus_id: 0
 #   cs_id: 0

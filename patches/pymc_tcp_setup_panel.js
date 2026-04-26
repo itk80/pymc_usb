@@ -1,29 +1,28 @@
 // =============================================================================
-// pymc_usb — Heltec TCP setup helper for the /setup wizard
+// pymc_usb — pymc_tcp setup helper for the /setup wizard
 //
 // The pymc_repeater SPA is a precompiled Vue bundle, so we cannot add real
 // fields to its setup form. This script does the next best thing:
 //
-//   1. Watches the wizard's hardware list. The button whose label is
-//      "Heltec V3 (Wi-Fi/TCP modem)" is detected by name; when it becomes
-//      the selected option (Vue adds `border-primary/50` to its class
-//      list), we insert a host / port / token block right after the
-//      hardware grid, on the same step card. Re-rendering or deselecting
-//      hides the block; the user's typed values are preserved across
-//      toggles.
+//   1. Watches the wizard's hardware list. The button whose label starts
+//      with "pymc_tcp" is detected by name; when it becomes the selected
+//      option (Vue adds `border-primary/50` to its class list), we
+//      insert a host / port / token block right after the hardware grid,
+//      on the same step card. Re-rendering or deselecting hides the
+//      block; the user's typed values are preserved across toggles.
 //   2. Hooks window.fetch so when the SPA POSTs to /api/setup_wizard with
-//      hardware_key="tcp_heltec", the block's values are spliced into the
-//      JSON body as tcp_heltec_host / tcp_heltec_port / tcp_heltec_token.
+//      hardware_key="pymc_tcp", the block's values are spliced into the
+//      JSON body as pymc_tcp_host / pymc_tcp_port / pymc_tcp_token.
 //
 // The matching server-side patch (scripts/install.sh §5b) reads those
 // fields from the request body and writes them to config.yaml.
 // =============================================================================
 (function () {
     var FORM_ID = 'pymc_usb-tcp-fields';
-    // Match the `name` of our tcp_heltec entry in radio-settings.json.
-    // Substring rather than equality so a future cosmetic rename of the
-    // suffix ("modem", "radio", ...) doesn't break detection.
-    var BUTTON_LABEL_MATCH = 'Heltec V3 (Wi-Fi/TCP';
+    // Match the `name` field of our pymc_tcp entry in radio-settings.json.
+    // We accept the legacy "Heltec V3 (Wi-Fi/TCP" label too so a not-yet-
+    // re-patched repeater install still surfaces our block.
+    var BUTTON_LABEL_MATCHES = ['pymc_tcp', 'Heltec V3 (Wi-Fi/TCP'];
     // The class Vue adds to the actively-selected hardware card.
     var SELECTED_CLASS_MARKER = 'border-primary/50';
 
@@ -31,8 +30,9 @@
         var buttons = document.querySelectorAll('button');
         for (var i = 0; i < buttons.length; i++) {
             // textContent includes both the name <div> and the description <div>.
-            if (buttons[i].textContent.indexOf(BUTTON_LABEL_MATCH) !== -1) {
-                return buttons[i];
+            var txt = buttons[i].textContent;
+            for (var k = 0; k < BUTTON_LABEL_MATCHES.length; k++) {
+                if (txt.indexOf(BUTTON_LABEL_MATCHES[k]) !== -1) return buttons[i];
             }
         }
         return null;
@@ -51,7 +51,7 @@
             'font:13px/1.4 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;';
         d.innerHTML =
             '<strong style="display:block;margin-bottom:6px;color:#2e7d57;">' +
-            'Heltec TCP — connection details</strong>' +
+            'pymc_tcp — connection details</strong>' +
             '<div style="font-size:12px;opacity:.75;margin-bottom:10px;">' +
             'Provision the Heltec on Wi-Fi first (AP portal at 192.168.4.1), ' +
             'then enter its LAN address here. The token is optional ' +
@@ -137,9 +137,10 @@
     scheduleSync();
 
     // Splice values into the wizard's POST body. Only mutates the request
-    // when tcp_heltec is the selected hardware; other selections pass
-    // through untouched.
+    // when pymc_tcp (or its legacy alias tcp_heltec) is the selected
+    // hardware; other selections pass through untouched.
     var origFetch = window.fetch;
+    var TCP_KEYS = ['pymc_tcp', 'tcp_heltec'];
     window.fetch = function (input, init) {
         try {
             var url = (typeof input === 'string') ? input : (input && input.url);
@@ -151,19 +152,19 @@
                 init && typeof init.body === 'string'
             ) {
                 var body = JSON.parse(init.body);
-                if (body && body.hardware_key === 'tcp_heltec') {
+                if (body && TCP_KEYS.indexOf(body.hardware_key) !== -1) {
                     var hostEl = document.getElementById(FORM_ID + '-host');
                     var portEl = document.getElementById(FORM_ID + '-port');
                     var tokenEl = document.getElementById(FORM_ID + '-token');
                     var host = hostEl ? hostEl.value.trim() : '';
                     var portStr = portEl ? portEl.value.trim() : '';
                     var token = tokenEl ? tokenEl.value : '';
-                    if (host) body.tcp_heltec_host = host;
+                    if (host) body.pymc_tcp_host = host;
                     if (portStr) {
                         var port = parseInt(portStr, 10);
-                        if (!isNaN(port)) body.tcp_heltec_port = port;
+                        if (!isNaN(port)) body.pymc_tcp_port = port;
                     }
-                    if (token !== '') body.tcp_heltec_token = token;
+                    if (token !== '') body.pymc_tcp_token = token;
                     init.body = JSON.stringify(body);
                 }
             }

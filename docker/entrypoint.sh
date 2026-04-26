@@ -11,14 +11,16 @@
 #      root.
 #   2. On first start (volume empty), seed /etc/pymc_repeater/config.yaml
 #      from the baked-in /etc/pymc_repeater/config.yaml.default.
-#   3. Apply env-var overrides (HELTEC_HOST/PORT/TOKEN, SERIAL_PORT, …) to
-#      the live config via PyYAML, so the user can change radio settings
-#      without rebuilding the image.
+#   3. Apply env-var overrides (PYMC_TCP_HOST/PORT/TOKEN, SERIAL_PORT, …)
+#      to the live config via PyYAML, so the user can change radio
+#      settings without rebuilding the image. Legacy HELTEC_* env vars
+#      are still accepted as fallbacks.
 #
-# Deferred-connect: if HELTEC_HOST is unset and the placeholder is still
-# in the config, we DO NOT abort. TCPLoRaRadio in pymc_usb supports
-# deferred-connect mode — the repeater starts and the user finishes
-# configuring the Heltec endpoint via the web UI's "Heltec config" panel.
+# Deferred-connect: if PYMC_TCP_HOST is unset and the placeholder is
+# still in the config, we DO NOT abort. TCPLoRaRadio in pymc_usb
+# supports deferred-connect mode — the repeater starts and the user
+# finishes configuring the modem endpoint via the web UI's
+# "pymc_tcp config" panel.
 # =============================================================================
 set -e
 
@@ -58,24 +60,50 @@ path = sys.argv[1]
 with open(path) as f:
     cfg = yaml.safe_load(f) or {}
 
-radio_type = os.environ.get("RADIO_TYPE", cfg.get("radio_type", "tcp_heltec")).strip()
+# Accept both the new pymc_* names and the legacy *_heltec aliases.
+# Normalise to the new ones on disk so the in-place file migrates
+# forward on first start with the new entrypoint.
+TCP_TYPES = {"pymc_tcp", "tcp_heltec"}
+USB_TYPES = {"pymc_usb", "usb_heltec"}
+radio_type = os.environ.get("RADIO_TYPE", cfg.get("radio_type", "pymc_tcp")).strip()
+if radio_type in TCP_TYPES:
+    radio_type = "pymc_tcp"
+elif radio_type in USB_TYPES:
+    radio_type = "pymc_usb"
 cfg["radio_type"] = radio_type
 
-if radio_type == "tcp_heltec":
-    sec = cfg.setdefault("tcp_heltec", {})
-    if os.environ.get("HELTEC_HOST"):
-        sec["host"] = os.environ["HELTEC_HOST"]
-    if os.environ.get("HELTEC_PORT"):
-        sec["port"] = int(os.environ["HELTEC_PORT"])
+if radio_type == "pymc_tcp":
+    # Migrate any legacy `tcp_heltec` section to `pymc_tcp` on first
+    # touch so the on-disk file ends up with a single section name.
+    if "tcp_heltec" in cfg and "pymc_tcp" not in cfg:
+        cfg["pymc_tcp"] = cfg.pop("tcp_heltec")
+    elif "tcp_heltec" in cfg:
+        cfg.pop("tcp_heltec", None)
+    sec = cfg.setdefault("pymc_tcp", {})
+    # PYMC_TCP_* env wins over the legacy HELTEC_* names.
+    host = os.environ.get("PYMC_TCP_HOST") or os.environ.get("HELTEC_HOST")
+    if host:
+        sec["host"] = host
+    port = os.environ.get("PYMC_TCP_PORT") or os.environ.get("HELTEC_PORT")
+    if port:
+        sec["port"] = int(port)
     # Token override is opt-in; an empty env-var string still counts as
     # "set to empty" because users sometimes need to explicitly clear it.
-    if "HELTEC_TOKEN" in os.environ:
+    if "PYMC_TCP_TOKEN" in os.environ:
+        sec["token"] = os.environ["PYMC_TCP_TOKEN"]
+    elif "HELTEC_TOKEN" in os.environ:
         sec["token"] = os.environ["HELTEC_TOKEN"]
-    if os.environ.get("HELTEC_CONNECT_TIMEOUT"):
-        sec["connect_timeout"] = float(os.environ["HELTEC_CONNECT_TIMEOUT"])
+    timeout = (os.environ.get("PYMC_TCP_CONNECT_TIMEOUT")
+               or os.environ.get("HELTEC_CONNECT_TIMEOUT"))
+    if timeout:
+        sec["connect_timeout"] = float(timeout)
 
-elif radio_type == "usb_heltec":
-    sec = cfg.setdefault("usb_heltec", {})
+elif radio_type == "pymc_usb":
+    if "usb_heltec" in cfg and "pymc_usb" not in cfg:
+        cfg["pymc_usb"] = cfg.pop("usb_heltec")
+    elif "usb_heltec" in cfg:
+        cfg.pop("usb_heltec", None)
+    sec = cfg.setdefault("pymc_usb", {})
     if os.environ.get("SERIAL_PORT"):
         sec["port"] = os.environ["SERIAL_PORT"]
     if os.environ.get("BAUDRATE"):
@@ -131,22 +159,22 @@ print(f"[OK] Config prepared: radio_type={radio_type}")
 PYEOF
 
 # Reachability summary — non-fatal in every branch. With deferred-connect
-# the repeater can start without a live Heltec; the user provisions the
+# the repeater can start without a live modem; the user provisions the
 # real endpoint through the web UI.
-RADIO_TYPE=$(python3 -c "import yaml; print(yaml.safe_load(open('$CONFIG')).get('radio_type','tcp_heltec'))")
+RADIO_TYPE=$(python3 -c "import yaml; print(yaml.safe_load(open('$CONFIG')).get('radio_type','pymc_tcp'))")
 
 case "$RADIO_TYPE" in
-    tcp_heltec)
-        HOST=$(python3 -c "import yaml; print(yaml.safe_load(open('$CONFIG')).get('tcp_heltec',{}).get('host',''))")
-        PORT=$(python3 -c "import yaml; print(yaml.safe_load(open('$CONFIG')).get('tcp_heltec',{}).get('port',5055))")
-        echo "[INFO] TCP Heltec target: ${HOST:-<unset>}:${PORT}"
+    pymc_tcp|tcp_heltec)
+        HOST=$(python3 -c "import yaml; c=yaml.safe_load(open('$CONFIG')); print((c.get('pymc_tcp') or c.get('tcp_heltec') or {}).get('host',''))")
+        PORT=$(python3 -c "import yaml; c=yaml.safe_load(open('$CONFIG')); print((c.get('pymc_tcp') or c.get('tcp_heltec') or {}).get('port',5055))")
+        echo "[INFO] pymc_tcp target: ${HOST:-<unset>}:${PORT}"
 
         case "$HOST" in
-            ""|"192.168.1.50"|"heltec-abcdef.local")
-                echo "[WARN] tcp_heltec.host is still a placeholder."
+            ""|"192.168.1.50"|"ikoka-abcdef.local"|"heltec-abcdef.local")
+                echo "[WARN] pymc_tcp.host is still a placeholder."
                 echo "       The repeater will start in deferred-connect mode —"
                 echo "       open the web UI and set the real host via the"
-                echo "       \"Heltec config\" panel, or restart with HELTEC_HOST=<ip>."
+                echo "       \"pymc_tcp config\" panel, or restart with PYMC_TCP_HOST=<ip>."
                 ;;
             *)
                 python3 - <<PYPROBE || true
@@ -162,8 +190,8 @@ PYPROBE
         esac
         ;;
 
-    usb_heltec)
-        PORT=$(python3 -c "import yaml; print(yaml.safe_load(open('$CONFIG')).get('usb_heltec',{}).get('port','/dev/ttyUSB0'))")
+    pymc_usb|usb_heltec)
+        PORT=$(python3 -c "import yaml; c=yaml.safe_load(open('$CONFIG')); print((c.get('pymc_usb') or c.get('usb_heltec') or {}).get('port','/dev/ttyUSB0'))")
         if [ -c "$PORT" ]; then
             echo "[OK]   USB device present: $PORT"
         else
@@ -176,7 +204,7 @@ PYPROBE
 
     *)
         echo "[ERROR] Unknown RADIO_TYPE: $RADIO_TYPE"
-        echo "        Expected one of: tcp_heltec, usb_heltec, sx1262"
+        echo "        Expected one of: pymc_tcp, pymc_usb, sx1262"
         # sx1262 falls through to the repeater itself for validation.
         ;;
 esac

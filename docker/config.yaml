@@ -1,4 +1,4 @@
-# pyMC Repeater — Docker default (Heltec V3 modem, USB or Wi-Fi/TCP)
+# pyMC Repeater — Docker default (pymc_usb / pymc_tcp modem)
 # https://github.com/itk80/pymc_usb
 #
 # This file is baked into the image as /etc/pymc_repeater/config.yaml.default
@@ -6,10 +6,10 @@
 # config volume is empty). Env vars in docker-compose.yml override the
 # values below at every container start — see docker/entrypoint.sh.
 #
-# Defaults to tcp_heltec because containers usually don't have direct USB
-# access; switch to usb_heltec via RADIO_TYPE=usb_heltec + SERIAL_PORT.
+# Defaults to pymc_tcp because containers usually don't have direct USB
+# access; switch to pymc_usb via RADIO_TYPE=pymc_usb + SERIAL_PORT.
 
-radio_type: tcp_heltec
+radio_type: pymc_tcp
 
 repeater:
   node_name: "pyMC_USB_RPT"
@@ -49,10 +49,10 @@ radio:
   crc_enabled: true
   implicit_header: false
 
-# Wi-Fi/TCP Heltec — active when radio_type: tcp_heltec
-# Override host with HELTEC_HOST env var (or use the Heltec config panel
-# in the web UI after the repeater starts).
-tcp_heltec:
+# Wi-Fi/TCP modem — active when radio_type: pymc_tcp
+# Override host with PYMC_TCP_HOST env var (or use the pymc_tcp config
+# panel in the web UI after the repeater starts).
+pymc_tcp:
   host: 192.168.1.50
   port: 5055
   token: ""
@@ -60,8 +60,8 @@ tcp_heltec:
   lbt_enabled: true
   lbt_max_attempts: 5
 
-# USB-CDC Heltec — active when radio_type: usb_heltec
-usb_heltec:
+# USB-CDC modem — active when radio_type: pymc_usb
+pymc_usb:
   port: /dev/ttyUSB0
   baudrate: 921600
   lbt_enabled: true
