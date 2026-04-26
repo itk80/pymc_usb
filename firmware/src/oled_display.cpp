@@ -1,30 +1,40 @@
 // =============================================================
-// oled_display.cpp — OLED status display using Adafruit_SSD1306
-// Matches MeshCore Heltec V3 OLED initialization
+// oled_display.cpp — SSD1306 status display
+// Same Adafruit_SSD1306 driver across every supported board; only
+// the I2C pins, optional VEXT rail and optional OLED reset line
+// vary, all sourced from board_config.h.
 // =============================================================
 #include "oled_display.h"
+#include "board_config.h"
 
 #define DISPLAY_ADDRESS 0x3C
 
 void OledDisplay::begin() {
-    // 1. Enable Vext power rail (GPIO 36) — must be HIGH before OLED init
-    //    This is PIN_VEXT_EN on Heltec V3 — powers OLED, sensors, etc.
-    pinMode(36, OUTPUT);
-    digitalWrite(36, LOW);   // Heltec V3: LOW = enable Vext
-    delay(100);
+    // 1. Enable VEXT power rail when the board has one (Heltec V3 ⇒
+    //    GPIO 36 LOW gates the 3V3 OLED rail). Skipped on boards that
+    //    feed the OLED directly from 3V3.
+    if (BOARD.pin_vext_enable_low >= 0) {
+        pinMode(BOARD.pin_vext_enable_low, OUTPUT);
+        digitalWrite(BOARD.pin_vext_enable_low, LOW);
+        delay(100);
+    }
 
-    // 2. Reset OLED
-    pinMode(OLED_RST, OUTPUT);
-    digitalWrite(OLED_RST, LOW);
-    delay(50);
-    digitalWrite(OLED_RST, HIGH);
-    delay(50);
+    // 2. Pulse OLED RST when present (skipped when pin_i2c_oled_rst == -1
+    //    — generic SSD1306 modules without an exposed RST pad).
+    if (BOARD.pin_i2c_oled_rst >= 0) {
+        pinMode(BOARD.pin_i2c_oled_rst, OUTPUT);
+        digitalWrite(BOARD.pin_i2c_oled_rst, LOW);
+        delay(50);
+        digitalWrite(BOARD.pin_i2c_oled_rst, HIGH);
+        delay(50);
+    }
 
-    // 3. Init I2C with Heltec V3 SDA/SCL pins
-    Wire.begin(OLED_SDA, OLED_SCL);
+    // 3. Init I2C with the board's SDA/SCL pins
+    Wire.begin(BOARD.pin_i2c_sda, BOARD.pin_i2c_scl);
 
-    // 4. Create Adafruit_SSD1306 (128x64, Wire, reset pin)
-    _display = new Adafruit_SSD1306(128, 64, &Wire, OLED_RST);
+    // 4. Create Adafruit_SSD1306. Pass -1 when no RST pin is wired —
+    //    the library accepts that and skips its internal reset call.
+    _display = new Adafruit_SSD1306(128, 64, &Wire, BOARD.pin_i2c_oled_rst);
 
     // 5. Start display — same call as MeshCore
     if (_display->begin(SSD1306_SWITCHCAPVCC, DISPLAY_ADDRESS, true, false)) {

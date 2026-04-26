@@ -1,8 +1,11 @@
 // =============================================================
-// main.cpp — Heltec LoRa Modem firmware
+// main.cpp — pymc_usb LoRa Modem firmware
 // Serial + Wi-Fi/TCP bridge to SX1262 for pymc_core on RPi.
 //
-// Heltec WiFi LoRa 32 V3 (ESP32-S3 + SX1262)
+// Supported boards (selected at compile time via -DBOARD_<name>):
+//   * Heltec WiFi LoRa 32 V3 (ESP32-S3 + bare SX1262)
+//   * Ikoka Stick (XIAO ESP32-S3 + Ebyte E22-P868M30S)
+//
 // USB-CDC @ 921600 baud AND/OR TCP on the port configured via NVS.
 // OTA (ArduinoOTA + HTTP) is always-on whenever STA is connected.
 //
@@ -14,6 +17,7 @@
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 #include "protocol.h"
+#include "board_config.h"
 #include "oled_display.h"
 #include "wifi_manager.h"
 #include "tcp_server.h"
@@ -21,7 +25,10 @@
 #include "ota_manager.h"
 
 // ─── Version ─────────────────────────────────────────────────
-#define FW_VERSION "v0.5.9"
+// Base version is shared by every board; the board's fw_suffix
+// distinguishes one binary from another (e.g. "v0.5.10-ikoka").
+#define FW_VERSION_BASE "v0.5.10"
+static String fwVersion;   // populated in setup()
 
 // ─── Task watchdog — self-heal on loop() hang ───────────────
 // A 30 s deadline is comfortably longer than any legitimate loop() burst
@@ -30,8 +37,9 @@
 static constexpr uint32_t LOOP_WDT_TIMEOUT_S = 30;
 
 // ─── Hardware setup ──────────────────────────────────────────
-// SX1262 on Heltec V3: NSS=8, DIO1=14, RST=12, BUSY=13
-SX1262 radio = new Module(LORA_NSS, LORA_DIO1, LORA_RST, LORA_BUSY);
+// SX1262 / E22-P pin map comes from BOARD (see boards/<name>.h).
+SX1262 radio = new Module(BOARD.pin_lora_nss, BOARD.pin_lora_dio1,
+                          BOARD.pin_lora_rst, BOARD.pin_lora_busy);
 
 OledDisplay oled;
 
@@ -102,14 +110,64 @@ void onDio1Rise() {
 }
 
 // ─── Hostname derivation (deterministic from MAC) ───────────
-// "heltec-XXXXXX" from last 3 MAC bytes. No OLED needed to find device —
-// host resolves it via mDNS: `heltec-ab12cd.local`.
+// "<prefix>-XXXXXX" from last 3 MAC bytes. No OLED needed to find
+// device — host resolves it via mDNS: e.g. `heltec-ab12cd.local`
+// or `ikoka-ab12cd.local` depending on the board.
 static String buildHostname() {
     uint8_t mac[6];
     WiFi.macAddress(mac);
-    char buf[24];
-    snprintf(buf, sizeof(buf), "heltec-%02x%02x%02x", mac[3], mac[4], mac[5]);
+    char buf[40];
+    snprintf(buf, sizeof(buf), "%s-%02x%02x%02x",
+             BOARD.mdns_prefix, mac[3], mac[4], mac[5]);
     return String(buf);
+}
+
+// ─── E22 RF switch boot sequence ────────────────────────────
+// Some carrier boards (Ebyte E22-P series, see datasheet §4.2) need
+// their EN pin held LOW for several seconds at power-up so the LDOs
+// and PA bias can settle before RF traffic starts. After the hold,
+// EN goes HIGH and stays there forever — never toggled by the radio
+// path. Boards without an external switch (en_pin == -1) skip both
+// steps entirely.
+static uint32_t enLowStartedMs = 0;
+
+static void rfSwitchEnLowAtBoot() {
+    if (BOARD.rf_switch.en_pin < 0) return;
+    pinMode(BOARD.rf_switch.en_pin, OUTPUT);
+    digitalWrite(BOARD.rf_switch.en_pin, LOW);
+    enLowStartedMs = millis();
+}
+
+static void rfSwitchEnHighAfterSettle() {
+    if (BOARD.rf_switch.en_pin < 0) return;
+    uint32_t elapsed = millis() - enLowStartedMs;
+    if (elapsed < BOARD.rf_switch.en_low_hold_ms) {
+        uint32_t remaining = BOARD.rf_switch.en_low_hold_ms - elapsed;
+        // Feed the watchdog every second while we wait so the 30 s
+        // task watchdog stays happy on long holds.
+        while (remaining > 0) {
+            uint32_t step = remaining > 1000 ? 1000 : remaining;
+            delay(step);
+            esp_task_wdt_reset();
+            remaining -= step;
+        }
+    }
+    digitalWrite(BOARD.rf_switch.en_pin, HIGH);
+    delay(20);   // small post-rise settle before we hit the SPI bus
+}
+
+static void rfSwitchConfigureRadio() {
+    if (BOARD.rf_switch.dio2_as_rf_switch) {
+        radio.setDio2AsRfSwitch(true);
+    } else if (BOARD.rf_switch.rx_pin >= 0 || BOARD.rf_switch.tx_pin >= 0) {
+        uint32_t rx = BOARD.rf_switch.rx_pin >= 0
+                          ? (uint32_t)BOARD.rf_switch.rx_pin
+                          : RADIOLIB_NC;
+        uint32_t tx = BOARD.rf_switch.tx_pin >= 0
+                          ? (uint32_t)BOARD.rf_switch.tx_pin
+                          : RADIOLIB_NC;
+        radio.setRfSwitchPins(rx, tx);
+    }
 }
 
 // ─── Frame output ────────────────────────────────────────────
@@ -247,7 +305,10 @@ bool applyConfig(const RadioConfig& cfg) {
     state = radio.setCodingRate(cfg.cr);
     if (state != RADIOLIB_ERR_NONE) return false;
 
-    state = radio.setOutputPower(cfg.power_dbm);
+    // Hardware ceiling per board (E22-P868M30S = 30 dBm, bare SX1262 = 22).
+    int8_t pwr = cfg.power_dbm;
+    if (pwr > BOARD.max_tx_power_dbm) pwr = BOARD.max_tx_power_dbm;
+    state = radio.setOutputPower(pwr);
     if (state != RADIOLIB_ERR_NONE) return false;
 
     state = radio.setSyncWord(cfg.syncword);
@@ -547,7 +608,7 @@ void processHostCommand(uint8_t cmd, const uint8_t* payload, uint16_t len,
     }
 
     case CMD_GET_VERSION: {
-        const char* v = FW_VERSION;
+        const char* v = fwVersion.c_str();
         sendFrame(CMD_VERSION_RESP, (const uint8_t*)v, (uint16_t)strlen(v), src);
         break;
     }
@@ -589,11 +650,26 @@ void setup() {
     // other init so button sampling is clean.
     WifiManager::checkResetButton();
 
+    // Drive the E22 EN pin LOW immediately so the LDOs and PA bias
+    // see a clean, deliberate power-up — no-op on boards with
+    // en_pin == -1. Counter starts now; rfSwitchEnHighAfterSettle()
+    // below makes sure the full board.en_low_hold_ms has elapsed
+    // before SPI traffic begins.
+    rfSwitchEnLowAtBoot();
+
     Serial.begin(921600);
     delay(500);
 
+    fwVersion = String(FW_VERSION_BASE) + "-" + BOARD.fw_suffix;
+
     oled.begin();
-    oled.showBoot(FW_VERSION);
+    oled.showBoot(fwVersion.c_str());
+
+    // Wait out the remaining EN-LOW hold (5 s on Ikoka; 0 on Heltec)
+    // and raise EN HIGH for the rest of the device's lifetime. After
+    // this point the RF switch is enabled; SX1262's DIO2 (or our
+    // rx_pin / tx_pin GPIOs) will drive the actual TX/RX selection.
+    rfSwitchEnHighAfterSettle();
 
     int state = radio.begin();
     if (state != RADIOLIB_ERR_NONE) {
@@ -605,8 +681,8 @@ void setup() {
         while (true) delay(1000);
     }
 
-    radio.setTCXO(1.8);
-    radio.setDio2AsRfSwitch(true);
+    if (BOARD.use_dio3_tcxo) radio.setTCXO(BOARD.tcxo_voltage);
+    rfSwitchConfigureRadio();
 
     if (!applyConfig(currentConfig)) {
         oled.showError("Config fail!");
@@ -622,7 +698,7 @@ void setup() {
     }
 
     radioReady = true;
-    oled.showStatus(0, 0, "---", "---", "BOOT", FW_VERSION);
+    oled.showStatus(0, 0, "---", "---", "BOOT", fwVersion.c_str());
     currentScreen = Screen::STATUS;
     oledWakeUntil = millis() + OLED_WAKE_DURATION_MS;
 
@@ -648,8 +724,8 @@ void setup() {
     esp_task_wdt_init(LOOP_WDT_TIMEOUT_S, true);
     esp_task_wdt_add(NULL);
 
-    Serial.printf("[BOOT] firmware %s ready (loop WDT %us)\n",
-                  FW_VERSION, (unsigned)LOOP_WDT_TIMEOUT_S);
+    Serial.printf("[BOOT] firmware %s on %s ready (loop WDT %us)\n",
+                  fwVersion.c_str(), BOARD.name, (unsigned)LOOP_WDT_TIMEOUT_S);
 }
 
 // ─── Noise floor sampling ────────────────────────────────────
@@ -713,7 +789,8 @@ void loop() {
 
     // PRG short-tap: cycle SLEEP → STATUS → RADIO → DIAGNOSTICS → STATUS → …
     // (Factory reset on 3 s hold-at-boot is handled in setup()/checkResetButton.)
-    if (digitalRead(0) == LOW && millis() > prgIgnoreUntil) {
+    bool btn = (digitalRead(BOARD.pin_user_button) == (BOARD.user_button_active_low ? LOW : HIGH));
+    if (btn && millis() > prgIgnoreUntil) {
         prgIgnoreUntil = millis() + PRG_DEBOUNCE_MS;
         oledWakeUntil  = millis() + OLED_WAKE_DURATION_MS;
         switch (currentScreen) {
@@ -748,7 +825,7 @@ void loop() {
                 oled.showStatus(status.rx_count, status.tx_count,
                                 WifiManager::getSSID(),
                                 WifiManager::getIPString(),
-                                stateTag, FW_VERSION);
+                                stateTag, fwVersion.c_str());
             } else if (currentScreen == Screen::RADIO) {
                 oled.showRadioConfig(currentConfig.freq_hz,
                                      currentConfig.bandwidth_hz,
@@ -757,7 +834,7 @@ void loop() {
                                      currentConfig.power_dbm,
                                      currentConfig.syncword,
                                      currentConfig.preamble_len,
-                                     FW_VERSION);
+                                     fwVersion.c_str());
             } else {  // Screen::DIAGNOSTICS
                 uint32_t uptime = millis() / 1000;
                 String ip = TCPServer::getClientIP();
@@ -766,7 +843,7 @@ void loop() {
                     : (millis() - lastUsbCmdMs) / 1000;
                 oled.showDiagnostics(uptime, ip.c_str(), usb_idle,
                                      status.rx_count, status.tx_count,
-                                     status.crc_errors, FW_VERSION);
+                                     status.crc_errors, fwVersion.c_str());
             }
         }
     }

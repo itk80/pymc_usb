@@ -3,6 +3,7 @@
 // =============================================================
 #include "wifi_manager.h"
 #include "config_portal.h"
+#include "board_config.h"
 
 #include <WiFi.h>
 #include <Preferences.h>
@@ -12,7 +13,6 @@ namespace WifiManager {
 static constexpr const char* NVS_NAMESPACE         = "lora_modem";
 static constexpr uint16_t    DEFAULT_TCP_PORT      = 5055;
 static constexpr uint32_t    STA_CONNECT_TIMEOUT_MS = 30000;
-static constexpr int         PRG_BUTTON_PIN        = 0;     // Heltec V3 PRG = GPIO0
 static constexpr uint32_t    PRG_RESET_HOLD_MS     = 3000;
 
 static Config  cfg;
@@ -103,11 +103,13 @@ void factoryReset() {
 }
 
 void checkResetButton() {
-    pinMode(PRG_BUTTON_PIN, INPUT_PULLUP);
-    if (digitalRead(PRG_BUTTON_PIN) != LOW) return;
+    const int  pin    = BOARD.pin_user_button;
+    const int  active = BOARD.user_button_active_low ? LOW : HIGH;
+    pinMode(pin, INPUT_PULLUP);
+    if (digitalRead(pin) != active) return;
 
     uint32_t start = millis();
-    while (digitalRead(PRG_BUTTON_PIN) == LOW) {
+    while (digitalRead(pin) == active) {
         if (millis() - start >= PRG_RESET_HOLD_MS) {
             factoryReset();   // does not return
             return;
