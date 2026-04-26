@@ -39,9 +39,15 @@ Raspberry Pi                                  Heltec V3
 pymc_usb/
 ├── firmware/                      # Shared firmware tree (PlatformIO)
 │   ├── platformio.ini             # two envs: heltec_v3 + ikoka_stick
-│   ├── bootloader.bin             # prebuilt heltec_v3 (offset 0x0)
-│   ├── partitions.bin             # prebuilt heltec_v3 (offset 0x8000)
-│   ├── firmware.bin               # prebuilt heltec_v3 (offset 0x10000)
+│   ├── build_release.sh           # builds every env + copies binaries below
+│   ├── heltec_v3/                 # prebuilt for Heltec V3
+│   │   ├── bootloader.bin         #   offset 0x0
+│   │   ├── partitions.bin         #   offset 0x8000
+│   │   └── firmware.bin           #   offset 0x10000
+│   ├── ikoka_stick/               # prebuilt for Ikoka Stick (XIAO + E22-P)
+│   │   ├── bootloader.bin
+│   │   ├── partitions.bin
+│   │   └── firmware.bin
 │   ├── include/
 │   │   ├── protocol.h             # Binary protocol (shared FW ↔ Python)
 │   │   ├── board_config.h         # BoardConfig + RfSwitchPolicy types

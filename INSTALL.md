@@ -12,34 +12,43 @@ your board:
 | Heltec WiFi LoRa 32 V3 | `heltec_v3` | `heltec-<mac3>.local` |
 | Ikoka Stick (XIAO ESP32-S3 + E22-P868M30S) | `ikoka_stick` | `ikoka-<mac3>.local` |
 
-### 1a. Prebuilt binaries (no PlatformIO) — Heltec V3 only
+### 1a. Prebuilt binaries (no PlatformIO)
 
-`firmware/` ships prebuilt artefacts for the Heltec env. For the Ikoka
-env build from source (§ 1b) — there are no pre-flashed binaries since
-the project doesn't ship hardware.
+`firmware/` ships per-board subdirectories with three flashable
+artefacts each:
 
-- `bootloader.bin` (15 kB, offset `0x0`)
-- `partitions.bin` (3 kB, offset `0x8000`)
-- `firmware.bin`   (~850 kB, offset `0x10000`)
+| Path                              | Offset | Size  |
+|-----------------------------------|--------|-------|
+| `firmware/<env>/bootloader.bin`   | `0x0`     | ~15 kB |
+| `firmware/<env>/partitions.bin`   | `0x8000`  | 3 kB   |
+| `firmware/<env>/firmware.bin`     | `0x10000` | ~830 kB|
+
+`<env>` is one of:
+
+- `heltec_v3` — Heltec WiFi LoRa 32 V3
+- `ikoka_stick` — XIAO ESP32-S3 + Ebyte E22-P868M30S
 
 ```bash
 pip install esptool
 
-# Full flash (fresh board, first install):
+# Full flash (fresh board, first install) — replace heltec_v3 with
+# ikoka_stick when flashing an Ikoka:
+ENV=heltec_v3
 esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 921600 write_flash \
-    0x0     firmware/bootloader.bin \
-    0x8000  firmware/partitions.bin \
-    0x10000 firmware/firmware.bin
+    0x0     firmware/$ENV/bootloader.bin \
+    0x8000  firmware/$ENV/partitions.bin \
+    0x10000 firmware/$ENV/firmware.bin
 
 # App-only update (board that already has a matching bootloader):
 esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 921600 write_flash \
-    0x10000 firmware/firmware.bin
+    0x10000 firmware/$ENV/firmware.bin
 ```
 
-On macOS the port is usually `/dev/cu.usbserial-*`. If the board doesn't
-enter flash mode automatically, hold **BOOT** while plugging in USB and
-release it once `esptool.py` starts. After flashing press **RST** or
-replug USB.
+On macOS the port is usually `/dev/cu.usbmodem*` for the Ikoka (native
+USB-CDC) or `/dev/cu.usbserial-*` for the Heltec (CP2102). If the board
+doesn't enter flash mode automatically, hold **BOOT** while plugging in
+USB and release it once `esptool.py` starts. After flashing press
+**RST** or replug USB.
 
 ### 1b. Build and flash with PlatformIO
 
@@ -51,6 +60,9 @@ pio run -e heltec_v3 -t upload
 
 # Ikoka Stick (XIAO ESP32-S3 + E22-P868M30S)
 pio run -e ikoka_stick -t upload
+
+# Refresh the prebuilt binaries under firmware/<env>/ for both envs:
+./build_release.sh
 ```
 
 The XIAO board enters bootloader mode automatically when PlatformIO

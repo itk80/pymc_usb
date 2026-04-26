@@ -301,7 +301,7 @@ else
         echo -e "  ${GREEN}Detected USB serial device: $USB_DEV${NC}"
         echo -e "  ${GREEN}→ radio_type=pymc_usb, port=$USB_DEV${NC}"
         echo "    (assumes the device runs our LoRa modem firmware —"
-        echo "     flash firmware/firmware.bin first if you haven't already)"
+        echo "     flash firmware/<board>/firmware.bin first if you haven't already)"
 
     else
         # No USB and no env-var — leave placeholder. Service will start in
@@ -882,12 +882,13 @@ echo "════════════════════════�
 echo -e "  ${GREEN}Installation complete!${NC}"
 echo ""
 echo "  Next steps:"
-echo "    1. Flash firmware to Heltec V3:"
+echo "    1. Flash firmware to your board (replace heltec_v3 with ikoka_stick"
+echo "       for Ikoka Stick):"
 echo "         esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 921600 \\"
-echo "           write_flash 0x0 $REPO_DIR/firmware/bootloader.bin \\"
-echo "                       0x8000 $REPO_DIR/firmware/partitions.bin \\"
-echo "                       0x10000 $REPO_DIR/firmware/firmware.bin"
-echo "    2. Connect Heltec (USB mode) or provision Wi-Fi (TCP mode — see INSTALL.md)"
+echo "           write_flash 0x0 $REPO_DIR/firmware/heltec_v3/bootloader.bin \\"
+echo "                       0x8000 $REPO_DIR/firmware/heltec_v3/partitions.bin \\"
+echo "                       0x10000 $REPO_DIR/firmware/heltec_v3/firmware.bin"
+echo "    2. Connect via USB or provision Wi-Fi (TCP mode — see INSTALL.md)"
 echo "    3. Test: python3 $REPO_DIR/pymc_driver/test_modem.py /dev/ttyUSB0"
 echo "    4. Configure: sudo nano /etc/pymc_repeater/config.yaml"
 echo "       (set radio_type: pymc_usb or pymc_tcp)"
